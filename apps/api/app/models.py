@@ -31,6 +31,18 @@ class UserRole(Base):
     user: Mapped[User] = relationship(back_populates="roles")
 
 
+class AccessCode(Base):
+    """Individually issued temporary pilot credentials; only hashes are stored."""
+    __tablename__ = "access_codes"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    display_name: Mapped[str] = mapped_column(String(120))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class Organization(Base):
     __tablename__ = "organizations"
     id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)

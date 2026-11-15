@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Check, ChevronDown, CircleHelp, CloudOff, Download, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
-import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginDemo, loginSupabase, logoutSupabase, persistSession, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
+import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
 type AnyRecord = Record<string, any>;
@@ -70,6 +70,7 @@ export default function Home() {
   const [authBusy, setAuthBusy] = useState(false);
   const [currentUserName, setCurrentUserName] = useState("");
   const demoMode = AUTH_MODE === "demo";
+  const accessCodeMode = AUTH_MODE === "access_code";
 
   const refreshQueue = useCallback(async () => {
     if (!token) return;
@@ -194,7 +195,9 @@ export default function Home() {
     const values = new FormData(event.currentTarget);
     setAuthBusy(true); setAuthError(""); setAuthMessage("");
     try {
-      const session = await loginSupabase(String(values.get("email") || ""), String(values.get("password") || ""));
+      const session = accessCodeMode
+        ? await loginAccessCode(String(values.get("name") || ""), String(values.get("email") || ""), String(values.get("access_code") || ""))
+        : await loginSupabase(String(values.get("email") || ""), String(values.get("password") || ""));
       await persistSession(session);
       setCurrentUserName(session.user.name);
       setRole(session.user.role); setToken(session.access_token); setActive(session.user.role === "cooperative_admin" ? "traceability" : "overview");
@@ -224,7 +227,7 @@ export default function Home() {
   }
 
   async function signOut() {
-    if (!demoMode) await logoutSupabase(token); else await clearSession();
+    if (AUTH_MODE === "supabase") await logoutSupabase(token); else await clearSession();
     setToken(""); setRole("farmer"); setFarm(null); setDashboard(null); setCoopDeliveries([]); setCurrentUserName(""); setAuthError(""); setAuthMessage("");
   }
 
@@ -351,7 +354,7 @@ export default function Home() {
   const farmLabel = farm?.name || "Farm workspace";
 
   if (loading && !token) return <main className="boot-screen"><span className="boot-mark"><Leaf size={25} /></span><LoaderCircle className="spinner" size={20} /><p>Opening Terravanta workspace…</p></main>;
-  if (!token) return <SignInScreen demoMode={demoMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onDemo={switchRole} />;
+  if (!token) return <SignInScreen demoMode={demoMode} accessCodeMode={accessCodeMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onDemo={switchRole} />;
 
   return <div className="app-shell">
     <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Cooperative portal" : farmLabel} location={`${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
@@ -382,10 +385,20 @@ export default function Home() {
   </div>;
 }
 
-function SignInScreen({ demoMode, busy, error, message, onSubmit, onRegister, onDemo }: { demoMode: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onDemo: (role: string) => void }) {
+function SignInScreen({ demoMode, accessCodeMode, busy, error, message, onSubmit, onRegister, onDemo }: { demoMode: boolean; accessCodeMode: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onDemo: (role: string) => void }) {
   const [registering, setRegistering] = useState(false);
-  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{demoMode ? "Open the farm workspace" : registering ? "Create a farmer account" : "Sign in to Terravanta"}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
-    {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : <>
+  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{demoMode ? "Open the farm workspace" : accessCodeMode ? "Use your pilot access code" : registering ? "Create a farmer account" : "Sign in to Terravanta"}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
+    {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : accessCodeMode ? <>
+      {error ? <div className="auth-error" role="alert">{error}</div> : null}
+      {message ? <div className="auth-info" role="status">{message}</div> : null}
+      <form className="auth-form" onSubmit={onSubmit}>
+        <Field label="Full name" name="name" autoComplete="name" minLength={2} />
+        <Field label="Email address" name="email" type="email" autoComplete="email" />
+        <Field label="Terravanta access code" name="access_code" autoComplete="one-time-code" minLength={20} />
+        <button className="button button-primary" disabled={busy}>{busy ? "Opening your workspace…" : "Continue securely"}</button>
+      </form>
+      <small className="auth-footnote">Pilot access codes are issued individually by Terravanta and tied to the invited name and email. Ask the person who invited you for your code.</small>
+    </> : <>
       {!SUPABASE_CONFIGURED ? <div className="auth-error" role="alert">Supabase Auth is not configured. Add your project URL and publishable anon key to `.env`, then rebuild the web service.</div> : null}
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
       {message ? <div className="auth-info" role="status">{message}</div> : null}
@@ -524,7 +537,7 @@ function ReportsView({ dashboard, alerts, passport }: AnyRecord) {
 
 function SettingsView({ role, userName, farm, passport, online, queued }: AnyRecord) {
   const initials = String(userName || "TV").split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join("").toUpperCase();
-  return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>Access roles are assigned by Terravanta. Farmer registration does not grant veterinarian or cooperative access.</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
+  return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : AUTH_MODE === "access_code" ? "Temporary access-code pilot" : "Supabase Auth"}</strong><small>Access roles are assigned by Terravanta. Farmer registration does not grant veterinarian or cooperative access.</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
 }
 
 function CooperativeView({ deliveries, runs, activeRun, busy, importFile, openRun, reviewItem }: {

@@ -23,6 +23,17 @@ def issue_demo_token(user: User, role: str) -> str:
     )
 
 
+def issue_access_code_token(user: User) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {"sub": str(user.id), "email": user.email, "name": user.display_name,
+         "role": "farmer", "iss": "terravanta-access-code", "aud": "terravanta-api",
+         "iat": now, "exp": now + timedelta(hours=12)},
+        settings.demo_auth_secret,
+        algorithm="HS256",
+    )
+
+
 def verified_supabase_user(access_token: str, expected_user_id: UUID) -> dict:
     """Load the provider's current identity before creating a Terravanta account."""
     if not settings.supabase_url or not settings.supabase_anon_key:
@@ -60,6 +71,15 @@ def current_identity(
     if credentials is None:
         raise HTTPException(status_code=401, detail="Sign in to continue")
     token = credentials.credentials
+    if settings.temp_access_auth_enabled:
+        try:
+            return jwt.decode(
+                token, settings.demo_auth_secret, algorithms=["HS256"],
+                issuer="terravanta-access-code", audience="terravanta-api",
+            )
+        except Exception:
+            if not settings.supabase_url:
+                raise HTTPException(status_code=401, detail="Invalid or expired access code session")
     if settings.supabase_url:
         try:
             header = jwt.get_unverified_header(token)

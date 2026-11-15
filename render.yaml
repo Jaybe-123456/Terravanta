@@ -25,6 +25,10 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      - key: TEMP_ACCESS_AUTH_ENABLED
+        value: "true"
+      - key: TEMP_ACCESS_ADMIN_SECRET
+        generateValue: true
       - key: ENABLE_SYNTHETIC_DATA
         value: "false"
       - key: UPLOADS_DIR

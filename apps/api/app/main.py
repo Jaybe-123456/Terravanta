@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
@@ -22,18 +22,18 @@ from .ai import nvidia, parse_structured, safe_case_response
 from .config import settings
 from .db import Base, SessionLocal, engine, get_db
 from .models import (
-    AIRequest, AIResponse, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
+    AIRequest, AIResponse, AccessCode, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
     FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot,
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, User, UserRole,
 )
 from .schemas import (
-    AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
+    AccessCodeIssue, AccessCodeLogin, AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
-from .security import bearer, current_identity, current_user, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
+from .security import bearer, current_identity, current_user, issue_access_code_token, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
 from .seed import FARMER_ID, FARM_ID, seed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -132,6 +132,75 @@ def demo_login(role: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(503, "Demo data is not initialized")
     return {"access_token": issue_demo_token(user, role), "token_type": "bearer", "user": {"id": str(user.id), "name": user.display_name, "role": role}, "synthetic": True}
+
+
+@app.post("/api/v1/auth/access-codes", status_code=201)
+def issue_access_code(
+    payload: AccessCodeIssue,
+    x_access_admin_key: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    """Issue a farmer-only pilot code. The raw code is returned once; only its hash is stored."""
+    if not settings.temp_access_auth_enabled or not settings.temp_access_admin_secret:
+        raise HTTPException(404, "Temporary access-code enrollment is disabled")
+    if not x_access_admin_key or not secrets.compare_digest(x_access_admin_key, settings.temp_access_admin_secret):
+        raise HTTPException(401, "Administrator key is invalid")
+    existing = db.query(User).filter(func.lower(User.email) == payload.email).first()
+    if existing:
+        assigned = user_roles(db, existing)
+        if assigned and assigned != {"farmer"}:
+            raise HTTPException(409, "This email is assigned to a staff role; use the approved staff invitation process")
+        if existing.display_name.casefold() != payload.name.casefold():
+            raise HTTPException(409, "This email already has a different account name")
+    code = secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc)
+    for previous in db.query(AccessCode).filter_by(email=payload.email, revoked_at=None).all():
+        previous.revoked_at = now
+    record = AccessCode(
+        code_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(),
+        email=payload.email, display_name=payload.name,
+        expires_at=now + timedelta(days=payload.expires_in_days),
+    )
+    db.add(record)
+    db.flush()
+    db.add(AuditLog(action="auth.access_code_issued", entity_type="access_code", entity_id=str(record.id), metadata_json={"email": payload.email, "expires_at": record.expires_at.isoformat()}))
+    db.commit()
+    return {"code": code, "name": payload.name, "email": payload.email, "expires_at": record.expires_at.isoformat(), "role": "farmer", "note": "Shown once. Share privately with the invited user."}
+
+
+@app.post("/api/v1/auth/access-code-login")
+def access_code_login(payload: AccessCodeLogin, db: Session = Depends(get_db)):
+    if not settings.temp_access_auth_enabled:
+        raise HTTPException(404, "Temporary access-code sign-in is disabled")
+    code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
+    record = db.query(AccessCode).filter_by(code_hash=code_hash, email=payload.email).first()
+    now = datetime.now(timezone.utc)
+    expires_at = record.expires_at if record else None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not record or record.revoked_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold():
+        raise HTTPException(401, "Name, email, or access code is invalid or expired")
+    user = db.query(User).filter(func.lower(User.email) == payload.email).first()
+    created = False
+    if user is None:
+        user = User(display_name=record.display_name, email=record.email)
+        db.add(user)
+        db.flush()
+        db.add(UserRole(user_id=user.id, role="farmer"))
+        audit(db, user, "account.farmer_access_code_created", "user", str(user.id))
+        created = True
+    else:
+        roles = user_roles(db, user)
+        if roles and roles != {"farmer"}:
+            raise HTTPException(403, "This access code is only valid for farmer accounts")
+        if not roles:
+            db.add(UserRole(user_id=user.id, role="farmer"))
+        if user.display_name.casefold() != record.display_name.casefold():
+            raise HTTPException(409, "The invited name does not match this existing account; contact Terravanta support")
+    audit(db, user, "auth.access_code_login", "user", str(user.id))
+    db.commit()
+    return {"access_token": issue_access_code_token(user), "token_type": "bearer", "expires_in": 43200,
+            "user": {"id": str(user.id), "name": user.display_name, "email": user.email, "role": "farmer", "created": created}}
 
 
 @app.post("/api/v1/auth/onboard", status_code=200)

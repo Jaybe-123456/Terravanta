@@ -4,7 +4,7 @@ This Blueprint deploys the FastAPI container, a private managed PostgreSQL datab
 
 ## Before creating the services
 
-1. Create a **dedicated Terravanta Supabase project** for authentication. Do not use VetIOS credentials. In its Auth URL Configuration, add the production Vercel URL to the allowed redirect URLs.
+1. Choose Supabase Auth for email/password accounts or use the temporary access-code pilot below. If using Supabase, create a **dedicated Terravanta Supabase project**; do not use VetIOS credentials. Add the production Vercel URL to its allowed redirect URLs.
 2. Identify the production Vercel origin, such as `https://terravanta.vercel.app`. The API CORS value must be the exact origin including `https://` and with no trailing slash. You can enter multiple exact origins separated by commas.
 3. Review the Render plan selection and billing screen before confirming creation. The checked-in Blueprint selects a continuously running API service (0.5 CPU / 512 MB), a paid Postgres instance (0.5 CPU / 1 GB), and 1 GB persistent file storage. Render's current published prices put these at about **$7/month + $19/month + $0.25/month**, or roughly **$26.25/month**, before bandwidth, taxes, workspace fees, or future scaling. Confirm current prices in your account before provisioning.
 
@@ -15,10 +15,7 @@ Do not choose Render's free Postgres for real farmer data: Render says free data
 1. Push `render.yaml` to the `main` branch of `Jaybe-123456/Terravanta`.
 2. In Render, choose **New → Blueprint** and connect that GitHub repository. Select `main` and let Render read `render.yaml`.
 3. Before confirming, verify the resources shown are `terravanta-api` and `terravanta-db`, both in Singapore, and review the monthly charges.
-4. Render will ask for the Blueprint's unsynced values. Set:
-   - `CORS_ORIGINS`: your exact production Vercel origin.
-   - `SUPABASE_URL`: the dedicated Terravanta project's URL.
-   - `SUPABASE_ANON_KEY`: that project's publishable/anon key (never a service-role key).
+4. Render will ask for the Blueprint's unsynced values. Set `CORS_ORIGINS` to your exact production Vercel origin. For Supabase Auth, also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the dedicated Terravanta project values (never a service-role key). The Blueprint enables the temporary farmer access-code mode and generates its administrator secret.
 5. Confirm creation. The API container's startup runs `alembic upgrade head`; the first migration enables PostGIS and creates the schema. `autoDeployTrigger: checksPass` means later commits deploy after GitHub checks pass.
 
 ## Get and verify the public API URL
@@ -41,13 +38,30 @@ In the Vercel project for Terravanta, add these Production environment variables
 | Variable | Value |
 | --- | --- |
 | `NEXT_PUBLIC_API_URL` | The Render API URL, with no trailing slash |
-| `NEXT_PUBLIC_AUTH_MODE` | `supabase` |
-| `NEXT_PUBLIC_SUPABASE_URL` | The same dedicated Terravanta Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The project's publishable/anon key |
+| `NEXT_PUBLIC_AUTH_MODE` | `supabase` for email/password, or `access_code` for the temporary pilot |
+| `NEXT_PUBLIC_SUPABASE_URL` | Required only for `supabase` mode |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Required only for `supabase` mode |
 
 Save the variables and redeploy the Production deployment because `NEXT_PUBLIC_API_URL` is compiled into the frontend build. Add the Vercel production URL to Supabase's redirect allowlist. After the Vercel URL is stable, keep `CORS_ORIGINS` on Render set to that exact origin and redeploy the API if you change it.
 
 For Vercel Preview deployments, add their exact origin to Render's comma-separated `CORS_ORIGINS` only if you intentionally want previews to access the same real database. Keep preview access off by default to avoid mixing development builds with production farm records.
+
+## Temporary access-code pilot
+
+If Supabase email confirmation is blocking a controlled pilot, the API supports individual farmer access codes. This is passwordless pilot authentication, not email ownership verification. Codes are tied to a name and email, stored as hashes, expire, and only grant the farmer role. Do not use it for veterinarian or cooperative accounts or distribute a code publicly.
+
+On Render, set `TEMP_ACCESS_AUTH_ENABLED=true` and set `TEMP_ACCESS_ADMIN_SECRET` to a unique random secret of at least 32 characters. Keep the existing `DEMO_AUTH_SECRET` unique and private; it signs temporary API sessions. On Vercel, set `NEXT_PUBLIC_AUTH_MODE=access_code`, keep `NEXT_PUBLIC_API_URL` pointed at the Render API, and redeploy Production. Supabase variables may remain configured but are not used by the access-code screen.
+
+Issue a code with PowerShell from a trusted machine. Replace the API origin, name, email, and admin secret. The raw code is returned once; send it privately to that named user. The code remains valid for the selected period (14 days by default, up to 90 days) and each session lasts 12 hours.
+
+```powershell
+$api = "https://YOUR-API.onrender.com"
+$adminSecret = Read-Host "Render TEMP_ACCESS_ADMIN_SECRET"
+$payload = @{ name = "Farmer Name"; email = "farmer@example.com"; expires_in_days = 14 } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "$api/api/v1/auth/access-codes" -Headers @{ "X-Access-Admin-Key" = $adminSecret } -ContentType "application/json" -Body $payload
+```
+
+Remove or rotate `TEMP_ACCESS_ADMIN_SECRET` and set `TEMP_ACCESS_AUTH_ENABLED=false` when the pilot ends. Vercel Deployment Protection is a separate front-door setting; app access codes cannot bypass it. Ensure the public Production domain is not protected by Vercel Auth if farmers should open it without a Vercel account.
 
 ## Operational limits before a real farm pilot
 

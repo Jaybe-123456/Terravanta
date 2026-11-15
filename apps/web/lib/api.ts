@@ -42,6 +42,20 @@ export async function loginSupabase(email: string, password: string): Promise<Se
   return createTerravantaSession(auth, email);
 }
 
+export async function loginAccessCode(name: string, email: string, code: string): Promise<Session> {
+  const response = await fetch(`${API_URL}/api/v1/auth/access-code-login`, {
+    method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, code }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.access_token) throw new Error(result.detail || "Name, email, or access code was not accepted.");
+  return {
+    access_token: result.access_token,
+    expires_at: Math.floor(Date.now() / 1000) + Number(result.expires_in || 43200),
+    user: result.user,
+  };
+}
+
 export async function signUpSupabase(name: string, email: string, password: string): Promise<Session | null> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Farmer registration is not configured for this deployment.");
   const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;
@@ -82,9 +96,9 @@ export async function consumeSupabaseRedirect(): Promise<Session | null> {
 export async function persistSession(session: Session): Promise<void> {
   if (typeof window === "undefined") return;
   currentAccessToken = session.access_token;
-  if (AUTH_MODE === "demo") {
+  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
     localStorage.setItem(ACCOUNT_KEY, session.user.id);
-    localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(session));
+    (AUTH_MODE === "access_code" ? sessionStorage : localStorage).setItem(DEMO_SESSION_KEY, JSON.stringify(session));
     return;
   }
   if (!session.refresh_token) throw new Error("Supabase did not return a refresh token. Sign in again.");
@@ -98,9 +112,14 @@ export async function persistSession(session: Session): Promise<void> {
 
 export async function restoreSession(): Promise<Session | null> {
   if (typeof window === "undefined") return null;
-  if (AUTH_MODE === "demo") {
+  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
     try {
-      const session = JSON.parse(localStorage.getItem(DEMO_SESSION_KEY) || "null") as Session | null;
+      const store = AUTH_MODE === "access_code" ? sessionStorage : localStorage;
+      const session = JSON.parse(store.getItem(DEMO_SESSION_KEY) || "null") as Session | null;
+      if (session?.expires_at && session.expires_at <= Math.floor(Date.now() / 1000)) {
+        store.removeItem(DEMO_SESSION_KEY);
+        return null;
+      }
       if (session?.access_token) currentAccessToken = session.access_token;
       return session;
     } catch { return null; }
@@ -121,8 +140,8 @@ export async function clearSession(): Promise<void> {
   if (typeof window === "undefined") return;
   currentAccessToken = "";
   localStorage.removeItem(ACCOUNT_KEY);
-  if (AUTH_MODE === "demo") {
-    localStorage.removeItem(DEMO_SESSION_KEY);
+  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
+    (AUTH_MODE === "access_code" ? sessionStorage : localStorage).removeItem(DEMO_SESSION_KEY);
     return;
   }
   await fetch("/api/session", { method: "DELETE", cache: "no-store" }).catch(() => undefined);
