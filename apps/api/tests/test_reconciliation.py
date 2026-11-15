@@ -19,8 +19,6 @@ def test_csv_parser_accepts_expected_headers_and_preserves_row_number():
     b"",
     b"farm,date,litres,reference\nF-1,2026-11-14,20,R-1\n",
     b"farm_code,farm_code,collection_date,milk_litres,receipt_reference\nF-1,F-1,2026-11-14,20,R-1\n",
-    b"farm_code,collection_date,milk_litres,receipt_reference\nF-1,20261114,20,R-1\n",
-    b"farm_code,collection_date,milk_litres,receipt_reference\nF-1,not-a-date,0,R-1\n",
 ])
 def test_csv_parser_rejects_empty_or_invalid_structure(content):
     with pytest.raises(ValueError):
@@ -34,6 +32,12 @@ def test_csv_parser_keeps_bad_rows_as_reviewable_exceptions():
         "invalid_row", None,
         ["Collection date must use YYYY-MM-DD", "Milk litres must be a number greater than zero"],
     )
+
+
+def test_csv_parser_rejects_basic_iso_date_form_as_reviewable_exception():
+    rows = parse_collection_csv(b"farm_code,collection_date,milk_litres,receipt_reference\nF-1,20261114,10,R-1\n")
+    assert rows[0]["errors"] == ["Collection date must use YYYY-MM-DD"]
+    assert classify_collection_entry(rows[0], []) == ("invalid_row", None, rows[0]["errors"])
 
 
 def test_exact_delivery_reference_and_quantity_match():
