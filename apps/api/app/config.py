@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     uploads_dir: str = "./data/uploads"
     ai_timeout_seconds: int = 35
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_postgres_driver(cls, value):
+        # Managed PostgreSQL providers commonly expose postgresql:// URLs.
+        # This project uses psycopg 3, so select its SQLAlchemy dialect explicitly.
+        if isinstance(value, str):
+            if value.startswith("postgres://"):
+                return "postgresql+psycopg://" + value.removeprefix("postgres://")
+            if value.startswith("postgresql://"):
+                return "postgresql+psycopg://" + value.removeprefix("postgresql://")
+        return value
 
     @property
     def allowed_origins(self) -> list[str]:

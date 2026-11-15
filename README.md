@@ -10,6 +10,8 @@ The product has three role-specific workspaces:
 
 See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), and the [market wedge, GTM and PMF validation plan](docs/GO_TO_MARKET.md).
 
+To deploy the public API and managed PostGIS database on Render, use the [Render deployment guide](docs/RENDER_DEPLOYMENT.md) and the checked-in `render.yaml` Blueprint.
+
 The initial commercial workflow is a cooperative milk-reconciliation service: import a daily collection sheet, match it to delivery records shared with consent, review exceptions, and trace each intake row to its source. The upload contract, deterministic rules, reviewer loop and success measures are documented in [the reconciliation service contract](docs/COOPERATIVE_RECONCILIATION.md).
 
 ## Run locally with Docker Compose

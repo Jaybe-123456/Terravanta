@@ -1,0 +1,46 @@
+services:
+  - type: web
+    name: terravanta-api
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    branch: main
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    numInstances: 1
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: terravanta-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DEMO_AUTH_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ENABLE_SYNTHETIC_DATA
+        value: "false"
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: AI_TIMEOUT_SECONDS
+        value: "35"
+    disk:
+      name: terravanta-uploads
+      mountPath: /var/data
+      sizeGB: 1
+
+databases:
+  - name: terravanta-db
+    databaseName: terravanta
+    user: terravanta
+    region: singapore
+    plan: 0.5c-1g
+    postgresMajorVersion: "16"
+    ipAllowList: []
