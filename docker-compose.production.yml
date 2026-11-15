@@ -1,0 +1,95 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: terravanta
+      POSTGRES_USER: terravanta
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terravanta -d terravanta"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [private]
+
+  api:
+    image: ${IMAGE_PREFIX:?Set IMAGE_PREFIX}-api:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://terravanta:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}@db:5432/terravanta
+      CORS_ORIGINS: https://${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN in .env.production}
+      DEMO_AUTH_SECRET: ${DEMO_AUTH_SECRET:?Set DEMO_AUTH_SECRET in .env.production}
+      ENABLE_SYNTHETIC_DATA: "false"
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL in .env.production}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?Set NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.production}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_CHAT_MODEL: ${NVIDIA_CHAT_MODEL:-nvidia/nemotron-3.5-lightning-30b-a3b}
+      NVIDIA_PARSE_MODEL: ${NVIDIA_PARSE_MODEL:-nvidia/nemotron-3.5-parse}
+      NVIDIA_PARSE_URL: ${NVIDIA_PARSE_URL:-}
+      NVIDIA_PARSE_API_KEY: ${NVIDIA_PARSE_API_KEY:-}
+      UPLOADS_DIR: /app/data/uploads
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-35}
+    volumes:
+      - api_uploads:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 30s
+    networks: [private]
+
+  web:
+    image: ${IMAGE_PREFIX:?Set IMAGE_PREFIX}-web:${IMAGE_TAG:?Set IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [private]
+
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set PUBLIC_DOMAIN in .env.production}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks: [private]
+
+networks:
+  private:
+
+volumes:
+  postgres_data:
+  api_uploads:
+  caddy_data:
+  caddy_config:

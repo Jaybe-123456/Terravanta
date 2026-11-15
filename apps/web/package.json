@@ -1,0 +1,24 @@
+{
+  "name": "terravanta-web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"dev": "next dev --hostname 0.0.0.0", "build": "next build --webpack", "start": "next start --hostname 0.0.0.0", "lint": "tsc --noEmit", "test": "node --import tsx --test tests/*.test.ts"},
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.10.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "autoprefixer": "^10.4.20",
+    "fake-indexeddb": "^6.2.8",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.15",
+    "typescript": "^5.7.3"
+  }
+}

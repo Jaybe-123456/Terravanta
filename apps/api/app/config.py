@@ -1,0 +1,51 @@
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    app_name: str = "Terravanta API"
+    app_env: str = "development"
+    database_url: str = "sqlite:///./terrava.db"
+    cors_origins: str = "http://localhost:3000"
+    demo_auth_secret: str = "local-demo-only-change-me"
+    enable_synthetic_data: bool = False
+    supabase_url: str = ""
+    supabase_jwks_url: str = ""
+    supabase_anon_key: str = ""
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_chat_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
+    nvidia_parse_model: str = "nvidia/nemotron-3.5-parse"
+    nvidia_parse_url: str = ""
+    nvidia_parse_api_key: str = ""
+    uploads_dir: str = "./data/uploads"
+    ai_timeout_seconds: int = 35
+    model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def effective_supabase_jwks_url(self) -> str:
+        if self.supabase_jwks_url:
+            return self.supabase_jwks_url
+        if self.supabase_url:
+            return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        return ""
+
+    @model_validator(mode="after")
+    def require_production_auth_configuration(self):
+        if self.app_env.lower() == "production":
+            if len(self.demo_auth_secret) < 32 or self.demo_auth_secret == "local-demo-only-change-me":
+                raise ValueError("Production requires a unique DEMO_AUTH_SECRET of at least 32 characters")
+            if not self.supabase_url or not self.supabase_anon_key:
+                raise ValueError("Production requires SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY")
+            if "*" in self.allowed_origins:
+                raise ValueError("Production CORS_ORIGINS must list explicit origins")
+            if self.enable_synthetic_data:
+                raise ValueError("Synthetic data must be disabled in production")
+        return self
+
+
+settings = Settings()
