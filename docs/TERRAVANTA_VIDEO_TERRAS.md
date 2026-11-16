@@ -25,7 +25,7 @@ The rendered preview is H.264 at 1280×720, 24 fps, with slow scene movement, cr
 
 ## Web deployment output
 
-The Next.js app uses its standard `.next` build directory, which matches the Vercel output path seen in the deployment logs. In Vercel, keep the project root at `apps/web`, use `npm run build`, and leave the output directory on Next.js auto-detection (or `.next`). The web Dockerfile copies the same `.next` artifact into its runner image.
+The Next.js app uses its standard `.next` build directory. `apps/web/vercel.json` explicitly sets the Vercel output directory to `.next`, overriding a stale dashboard value of `build-output`. Keep the Vercel project root at `apps/web` and use `npm run build`; the web Dockerfile copies the same `.next` artifact into its runner image.
 
 ## Terras workflow guide
 
