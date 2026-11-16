@@ -28,6 +28,16 @@ def test_public_app_origin_can_be_changed_explicitly():
     ]
 
 
+def test_development_does_not_allow_production_origin_by_default():
+    settings = Settings(
+        _env_file=None,
+        app_env="development",
+        cors_origins="http://localhost:3000",
+    )
+
+    assert settings.allowed_origins == ["http://localhost:3000"]
+
+
 def test_vercel_production_origin_passes_api_preflight(client):
     response = client.options(
         "/api/v1/auth/request-access-code",

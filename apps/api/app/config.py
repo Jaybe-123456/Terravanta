@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     @property
     def allowed_origins(self) -> list[str]:
         configured = [item.strip() for item in self.cors_origins.split(",") if item.strip()]
-        if self.public_app_origin.strip():
+        if self.app_env.lower() in {"production", "test"} and self.public_app_origin.strip():
             configured.append(self.public_app_origin.strip().rstrip("/"))
         return list(dict.fromkeys(configured))
 
