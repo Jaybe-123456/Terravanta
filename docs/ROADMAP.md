@@ -9,6 +9,7 @@
 - Farm registration, farm passport, plots, livestock, health events, veterinary queue and signed verification, feed inventory/allocation, manure, compost and plot application.
 - Production source records, product lots and deliveries; delivery quantities cannot exceed their source record, and active consent controls cooperative access.
 - Consent targets registered cooperative organizations or a cooperative administrator email; cooperative views show only delivery-summary fields plus a documentation prompt based on a missing shared delivery reference. They do not reveal clinical or laboratory records.
+- System-agnostic cooperative settlement-close workbench: import collection, processor settlement and payout CSVs; match by normalized member code and period; compare volume and exact KES arithmetic; retain hashes, source row references, exception notes and approver audit; download statement-pack CSV only after server-enforced approval. This workflow does not use NVIDIA, edit source ledgers, initiate payments or automatically deliver statements.
 - A private operator CLI can create cooperative organizations and provision invited veterinarian/cooperative identities with farm or organization membership. Staff roles cannot be assigned through public signup.
 - Rule-based alerts, AI provider abstraction, opt-in NVIDIA veterinary draft workflow, local PDF text extraction, configurable Nemotron Parse NIM image parsing and review-only structured document drafts.
 - Offline POST queue for one browser, scoped to the current user; the API remains the source of truth after synchronization.
@@ -27,7 +28,7 @@
 - Parse is an adapter to the native NIM multipart `/v1/parse` contract. A reachable `NVIDIA_PARSE_URL` and any required Parse credentials are required. A Build hosted Parse contract has not been verified here. PDF text extraction is local; all extracted data stays a draft.
 - There are no bundled approved veterinary references, no veterinarian-reviewed AI evaluation set, and no evidence that the heuristic safety filter catches every unsafe output. Do not use AI output for diagnosis, prescribing or treatment decisions.
 - Normalized tables exist for vaccination/treatment/reproduction/quality/laboratory records, but some still lack dedicated end-user workflows. No milk is certified safe and no agronomic/nutrient balance is inferred.
-- There is no cooperative ERP, scale/hardware, payout, buyer identity or lab integration. Market assumptions are recorded as hypotheses in [Go-to-market plan](GO_TO_MARKET.md); no PMF or revenue is claimed.
+- There is no cooperative ERP, processor, scale/hardware, bank/M-Pesa payout, buyer identity or lab integration. Settlement uses documented CSV contracts; there is no verified stable member-code mapping between any named systems. Market assumptions are recorded as hypotheses in [Go-to-market plan](GO_TO_MARKET.md); no PMF, savings result or revenue is claimed.
 - Add production observability, backups/restore drills, idempotent API persistence, rate-limit storage suitable for multiple workers, privacy/retention review, penetration testing, accessibility checks and on-call support before onboarding real farms.
 
 ## Next build sequence

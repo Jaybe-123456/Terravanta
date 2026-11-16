@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -392,6 +393,57 @@ class ReconciliationItem(Base):
     review_note: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("run_id", "row_number", name="uq_reconciliation_run_row"),)
+
+
+class SettlementClose(Base):
+    __tablename__ = "settlement_closes"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    approved_by: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    period_start: Mapped[object] = mapped_column(Date)
+    period_end: Mapped[object] = mapped_column(Date)
+    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    collection_filename: Mapped[str] = mapped_column(String(255))
+    processor_filename: Mapped[str] = mapped_column(String(255))
+    payout_filename: Mapped[str] = mapped_column(String(255))
+    collection_sha256: Mapped[str] = mapped_column(String(64))
+    processor_sha256: Mapped[str] = mapped_column(String(64))
+    payout_sha256: Mapped[str] = mapped_column(String(64))
+    collection_row_count: Mapped[int] = mapped_column(Integer, default=0)
+    processor_row_count: Mapped[int] = mapped_column(Integer, default=0)
+    payout_row_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="review_required", index=True)
+    approval_note: Mapped[str] = mapped_column(String(500), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("organization_id", "source_fingerprint", name="uq_settlement_org_fingerprint"),)
+
+
+class SettlementCloseItem(Base):
+    __tablename__ = "settlement_close_items"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    close_id: Mapped[object] = mapped_column(Uuid, ForeignKey("settlement_closes.id", ondelete="CASCADE"), index=True)
+    member_code: Mapped[str] = mapped_column(String(80), index=True)
+    collection_liters: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
+    processor_liters: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
+    volume_variance_liters: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
+    gross_amount_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    deductions_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    net_amount_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    payout_amount_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    processor_arithmetic_variance_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    payout_variance_kes: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    issues: Mapped[list] = mapped_column(JSON, default=list)
+    source_rows: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_references: Mapped[dict] = mapped_column(JSON, default=dict)
+    review_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    reviewer_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("close_id", "member_code", name="uq_settlement_member_per_close"),)
 
 
 class QualityTest(Base):

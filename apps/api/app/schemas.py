@@ -172,6 +172,29 @@ class ReconciliationReviewCreate(BaseModel):
         return self
 
 
+class SettlementReviewCreate(BaseModel):
+    decision: Literal["accept_with_note", "follow_up"]
+    note: str = Field(min_length=3, max_length=500)
+
+    @model_validator(mode="after")
+    def normalize_note(self):
+        self.note = self.note.strip()
+        if len(self.note) < 3:
+            raise ValueError("Add a short note explaining the exception review")
+        return self
+
+
+class SettlementApproveCreate(BaseModel):
+    note: str = Field(min_length=5, max_length=500)
+
+    @model_validator(mode="after")
+    def normalize_note(self):
+        self.note = self.note.strip()
+        if len(self.note) < 5:
+            raise ValueError("Add a close approval note of at least five characters")
+        return self
+
+
 class ConsentCreate(BaseModel):
     scope: Literal["delivery_summary"] = "delivery_summary"
     grantee_email: str | None = Field(default=None, max_length=255)

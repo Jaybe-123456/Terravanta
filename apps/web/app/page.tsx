@@ -55,6 +55,8 @@ export default function Home() {
   const [coopDeliveries, setCoopDeliveries] = useState<AnyRecord[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AnyRecord[]>([]);
   const [activeReconciliation, setActiveReconciliation] = useState<AnyRecord | null>(null);
+  const [settlementCloses, setSettlementCloses] = useState<AnyRecord[]>([]);
+  const [activeSettlementClose, setActiveSettlementClose] = useState<AnyRecord | null>(null);
   const [cooperatives, setCooperatives] = useState<AnyRecord[]>([]);
   const [vetQueue, setVetQueue] = useState<AnyRecord[]>([]);
   const [aiResponse, setAiResponse] = useState<AnyRecord | null>(null);
@@ -87,12 +89,14 @@ export default function Home() {
     setLoading(true);
     try {
       if (currentRole === "cooperative_admin") {
-        const [shared, runs] = await Promise.all([
+        const [shared, runs, closes] = await Promise.all([
           api<AnyRecord[]>("/api/v1/cooperative/deliveries", accessToken),
           api<AnyRecord[]>("/api/v1/cooperative/reconciliation/runs", accessToken),
+          api<AnyRecord[]>("/api/v1/cooperative/settlement-closes", accessToken),
         ]);
         const activeRun = runs.length ? await api<AnyRecord>(`/api/v1/cooperative/reconciliation/runs/${runs[0].id}`, accessToken) : null;
-        setCoopDeliveries(shared); setReconciliationRuns(runs); setActiveReconciliation(activeRun);
+        const latestClose = closes.length ? await api<AnyRecord>(`/api/v1/cooperative/settlement-closes/${closes[0].id}`, accessToken) : null;
+        setCoopDeliveries(shared); setReconciliationRuns(runs); setActiveReconciliation(activeRun); setSettlementCloses(closes); setActiveSettlementClose(latestClose);
         setLoading(false);
         return;
       }
@@ -316,6 +320,70 @@ export default function Home() {
     } finally { setSaving(false); }
   }
 
+  async function createSettlementClose(form: FormData) {
+    setSaving(true);
+    try {
+      const result = await api<AnyRecord>("/api/v1/cooperative/settlement-closes", token, { method: "POST", body: form });
+      setActiveSettlementClose(result);
+      setToast({ text: `Settlement close created for ${result.close.member_count} members. Review all flagged variances before approval.` });
+      await loadWorkspace(token, role);
+    } catch (error) {
+      setToast({ text: error instanceof Error ? error.message : "Could not reconcile settlement exports", error: true });
+    } finally { setSaving(false); }
+  }
+
+  async function openSettlementClose(closeId: string) {
+    try {
+      const result = await api<AnyRecord>(`/api/v1/cooperative/settlement-closes/${closeId}`, token);
+      setActiveSettlementClose(result);
+    } catch (error) {
+      setToast({ text: error instanceof Error ? error.message : "Could not open settlement close", error: true });
+    }
+  }
+
+  async function reviewSettlementException(closeId: string, itemId: string, decision: "accept_with_note" | "follow_up", note: string) {
+    setSaving(true);
+    try {
+      const result = await api<AnyRecord>(`/api/v1/cooperative/settlement-closes/${closeId}/items/${itemId}/review`, token, {
+        method: "POST", body: JSON.stringify({ decision, note }),
+      });
+      setActiveSettlementClose(result);
+      setToast({ text: decision === "accept_with_note" ? "Exception accepted with an audit note; source values were not changed." : "Follow-up recorded. The close remains open until the exception is accepted or resolved." });
+      await loadWorkspace(token, role);
+    } catch (error) {
+      setToast({ text: error instanceof Error ? error.message : "Could not record exception review", error: true });
+    } finally { setSaving(false); }
+  }
+
+  async function approveSettlementClose(closeId: string, note: string) {
+    setSaving(true);
+    try {
+      const result = await api<AnyRecord>(`/api/v1/cooperative/settlement-closes/${closeId}/approve`, token, {
+        method: "POST", body: JSON.stringify({ note }),
+      });
+      setActiveSettlementClose(result);
+      setToast({ text: "Settlement close approved. Source exports remain unchanged." });
+      await loadWorkspace(token, role);
+    } catch (error) {
+      setToast({ text: error instanceof Error ? error.message : "Could not approve settlement close", error: true });
+    } finally { setSaving(false); }
+  }
+
+  async function downloadSettlementPack(closeId: string) {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/cooperative/settlement-closes/${closeId}/statement-pack`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || "Could not download the approved statement pack");
+      }
+      const href = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = href; link.download = `terravanta-settlement-${closeId}.csv`; link.click(); URL.revokeObjectURL(href);
+    } catch (error) {
+      setToast({ text: error instanceof Error ? error.message : "Could not download statement pack", error: true });
+    }
+  }
+
   async function revokeConsent(consentId: string) {
     setSaving(true);
     try { await api(`/api/v1/consents/${consentId}`, token, { method: "DELETE" }); setToast({ text: "Sharing consent revoked" }); await reload(); }
@@ -378,7 +446,7 @@ export default function Home() {
         <div className="page-heading"><div><p className="eyebrow">{isCoop ? "CONSENTED SHARED RECORDS" : farm ? `${farm.county?.toUpperCase() || "KENYA"} · ${(farm.farming_system || "farm").toUpperCase()}` : "FARM IDENTITY & RECORDS"}</p><h1>{sectionTitle(active, isCoop)}</h1><p>{sectionDescription(active, farm?.name, isCoop)}</p></div><div className="heading-badges"><span className="synthetic-badge"><span />{isCoop ? "CONSENTED PORTAL DATA" : farm?.is_synthetic ? "SYNTHETIC DEMO DATA" : farm ? "FARMER-SUBMITTED DATA" : "EMPTY WORKSPACE"}</span><span className="date-chip">{new Intl.DateTimeFormat("en-KE", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div></div>
 
         {loading && token ? <div className="loading-strip"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
-        {isCoop ? <CooperativeView deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} onNavigate={onNav} /> : null}
+        {isCoop ? <CooperativeView deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} onNavigate={onNav} /> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -570,14 +638,21 @@ function SettingsView({ role, userName, farm, passport, online, queued }: AnyRec
   return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : AUTH_MODE === "access_code" ? "Temporary access-code pilot" : "Supabase Auth"}</strong><small>Access roles are assigned by Terravanta. Farmer registration does not grant veterinarian or cooperative access.</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
 }
 
-function CooperativeView({ deliveries, runs, activeRun, busy, importFile, openRun, reviewItem }: {
+function CooperativeView({ deliveries, runs, activeRun, closes, activeClose, busy, importFile, openRun, reviewItem, createClose, openClose, reviewException, approveClose, downloadPack }: {
   deliveries: AnyRecord[];
   runs: AnyRecord[];
   activeRun: AnyRecord | null;
+  closes: AnyRecord[];
+  activeClose: AnyRecord | null;
   busy: boolean;
   importFile: (file: File) => void;
   openRun: (id: string) => void;
   reviewItem: (id: string, decision: "confirmed" | "follow_up", note: string) => void;
+  createClose: (form: FormData) => void;
+  openClose: (id: string) => void;
+  reviewException: (closeId: string, itemId: string, decision: "accept_with_note" | "follow_up", note: string) => void;
+  approveClose: (closeId: string, note: string) => void;
+  downloadPack: (closeId: string) => void;
 }) {
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const farmCount = new Set(deliveries.map((row) => row.farm_code)).size;
@@ -597,6 +672,7 @@ function CooperativeView({ deliveries, runs, activeRun, busy, importFile, openRu
     URL.revokeObjectURL(href);
   }
   return <>
+    <SettlementCloseWorkbench closes={closes} activeClose={activeClose} busy={busy} createClose={createClose} openClose={openClose} reviewException={reviewException} approveClose={approveClose} downloadPack={downloadPack} />
     <div className="stats-grid"><article className="stat-card"><div className="stat-top"><span className="stat-icon green">⌂</span><span className="stat-quiet">farms</span></div><p>Consented farms</p><div className="stat-value">{farmCount}<span> farms</span></div><small>Only active grants</small></article><article className="stat-card"><div className="stat-top"><span className="stat-icon blue">↗</span><span className="stat-quiet">records</span></div><p>Shared deliveries</p><div className="stat-value">{deliveries.length}<span> deliveries</span></div><small>Read-only summaries</small></article><article className="stat-card"><div className="stat-top"><span className="stat-icon earth">◌</span><span className="stat-quiet">litres</span></div><p>Consented milk volume</p><div className="stat-value">{liters.toLocaleString()}<span> L</span></div><small>Sum of shared delivery rows</small></article><article className="stat-card"><div className="stat-top"><span className="stat-icon amber">!</span><span className="stat-quiet">rows</span></div><p>Delivery gaps</p><div className="stat-value">{gaps}<span> rows</span></div><small>Missing reference on shared records</small></article></div>
     <section className="card reconciliation-card">
       <PanelTitle eyebrow="COOPERATIVE RECONCILIATION SERVICE" title="Collection sheet to verified delivery record" description="Upload your daily intake CSV. Terravanta matches rows against farm-consented delivery records, routes exceptions to a reviewer, and preserves the resulting trace." action={<a className="button button-outline" download="terravanta-collection-template.csv" href="data:text/csv;charset=utf-8,farm_code%2Ccollection_date%2Cmilk_litres%2Creceipt_reference%0A"><FileUp size={15} />CSV template</a>} />
@@ -620,4 +696,66 @@ function CooperativeView({ deliveries, runs, activeRun, busy, importFile, openRu
     </section>
     <section className="card coop-card"><PanelTitle eyebrow="RESTRICTED READ-ONLY PORTAL" title="Farm delivery summaries" description="Only records covered by active farm-owner consent are returned by the API." />{deliveries.length ? <div className="table-scroll"><table><thead><tr><th>Farm</th><th>Product lot</th><th>Delivery date</th><th>Quantity</th><th>Documentation</th><th>Access scope</th></tr></thead><tbody>{deliveries.map((row) => <tr key={row.delivery.id}><td><strong>{row.farm_name}</strong><small className="cell-sub">{row.farm_code} · {row.synthetic ? "synthetic" : "farmer submitted"}</small></td><td className="mono">{row.lot_code}<small className="cell-sub capitalize">{row.product_type}</small></td><td>{row.delivery.delivery_date}</td><td>{row.delivery.quantity} {row.delivery.unit}</td><td>{row.documentation_gaps?.length ? <StatusPill tone="amber">Missing reference</StatusPill> : <StatusPill tone="green">Reference recorded</StatusPill>}</td><td><StatusPill tone="green">{row.scope.replaceAll("_", " ")}</StatusPill></td></tr>)}</tbody></table></div> : <Empty title="No farms have shared records" detail="A farm owner must grant delivery-summary consent before records appear here." />}<div className="provenance-banner"><ShieldCheck size={18} /><p><strong>Private veterinary and quality-test records are excluded.</strong> Revoked consent is removed from future API responses. Reconciliation is deterministic and keeps each reviewer action in the audit trail.</p></div></section>
   </>;
+}
+
+function SettlementCloseWorkbench({ closes, activeClose, busy, createClose, openClose, reviewException, approveClose, downloadPack }: {
+  closes: AnyRecord[];
+  activeClose: AnyRecord | null;
+  busy: boolean;
+  createClose: (form: FormData) => void;
+  openClose: (id: string) => void;
+  reviewException: (closeId: string, itemId: string, decision: "accept_with_note" | "follow_up", note: string) => void;
+  approveClose: (closeId: string, note: string) => void;
+  downloadPack: (closeId: string) => void;
+}) {
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [approvalNote, setApprovalNote] = useState("");
+  const periodStartDefault = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+  const close = activeClose?.close;
+  const items: AnyRecord[] = activeClose?.items || [];
+  function submitClose(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const payload = new FormData();
+    payload.set("period_start", String(values.get("period_start") || ""));
+    payload.set("period_end", String(values.get("period_end") || ""));
+    for (const key of ["collection_file", "processor_file", "payout_file"]) {
+      const file = values.get(key);
+      if (file instanceof File) payload.set(key, file);
+    }
+    createClose(payload);
+  }
+  const linkTemplate = (name: string, headers: string) => <a className="text-link" download={name} href={`data:text/csv;charset=utf-8,${encodeURIComponent(`${headers}\n`)}`}>Download template</a>;
+  return <section className="card reconciliation-card settlement-workbench">
+    <PanelTitle eyebrow="SETTLEMENT ASSURANCE · REVIEWABLE AUTOMATION" title="Close the milk payout period" description="Reconcile existing collection, processor settlement and payout exports. Exact arithmetic is automated; exceptions require a named cooperative reviewer before the close can be approved." />
+    <form className="settlement-import" onSubmit={submitClose}>
+      <div className="settlement-period"><Field label="Period start" name="period_start" type="date" defaultValue={periodStartDefault} /><Field label="Period end" name="period_end" type="date" defaultValue={dateInput()} /></div>
+      <div className="settlement-files">
+        <label className="settlement-file"><span><strong>1 · Collection export</strong><small>member_code, delivery_date, quantity_liters, receipt_reference</small>{linkTemplate("terravanta-collection-close-template.csv", "member_code,delivery_date,quantity_liters,receipt_reference")}</span><input name="collection_file" type="file" accept=".csv,text/csv" required disabled={busy} /></label>
+        <label className="settlement-file"><span><strong>2 · Processor settlement export</strong><small>member_code, settlement_date, accepted_liters, gross_amount_kes, deductions_kes, net_amount_kes, settlement_reference</small>{linkTemplate("terravanta-processor-settlement-template.csv", "member_code,settlement_date,accepted_liters,gross_amount_kes,deductions_kes,net_amount_kes,settlement_reference")}</span><input name="processor_file" type="file" accept=".csv,text/csv" required disabled={busy} /></label>
+        <label className="settlement-file"><span><strong>3 · Farmer payout export</strong><small>member_code, payout_date, amount_kes, payout_reference</small>{linkTemplate("terravanta-payout-template.csv", "member_code,payout_date,amount_kes,payout_reference")}</span><input name="payout_file" type="file" accept=".csv,text/csv" required disabled={busy} /></label>
+      </div>
+      <button className="button button-primary" disabled={busy}><GitBranch size={15} />{busy ? "Reconciling exports…" : "Reconcile payout period"}</button>
+    </form>
+    <div className="reconciliation-privacy"><ShieldCheck size={17} /><span><strong>Evidence-first, model-independent processing</strong><small>CSV files stay in the API workflow. Matching uses member code, period, litres and amount arithmetic; no NVIDIA request, payment instruction or source-record edit is made. Each input file is SHA-256 fingerprinted to prevent duplicate imports.</small></span></div>
+    {closes.length ? <div className="run-history"><div className="subsection-title"><h3>Recent settlement closes</h3></div><div className="run-list">{closes.map((row) => <button className={`run-chip ${close?.id === row.id ? "selected" : ""}`} key={row.id} type="button" onClick={() => openClose(row.id)}><span><strong>{row.period_start} – {row.period_end}</strong><small>{row.member_count} members · {row.collection_row_count + row.processor_row_count + row.payout_row_count} source rows</small></span><span className="run-counts"><b>{row.reconciled_count} reconciled</b><small>{row.pending_review_count} pending review</small></span></button>)}</div></div> : null}
+    {close ? <>
+      <div className="reconciliation-summary"><div><span>Member records</span><strong>{close.member_count}</strong></div><div><span>Auto-reconciled</span><strong>{close.reconciled_count}</strong></div><div><span>Exceptions</span><strong>{close.exception_count}</strong></div><div><span>Pending review</span><strong>{close.pending_review_count}</strong></div><StatusPill tone={close.status === "approved" ? "green" : close.pending_review_count ? "amber" : "green"}>{close.status.replaceAll("_", " ")}</StatusPill></div>
+      <div className="table-scroll reconciliation-table"><table><thead><tr><th>Member</th><th>Collection / processor</th><th>Volume variance</th><th>Gross · deductions · net</th><th>Paid · variance</th><th>Reconciliation</th><th>Reviewer action</th></tr></thead><tbody>{items.map((item) => {
+        const note = reviewNotes[item.id] || "";
+        const reviewOpen = item.review_status !== "accepted_with_note";
+        return <tr key={item.id}>
+          <td><strong>{item.member_code}</strong><small className="cell-sub">Collection rows {item.source_rows?.collection?.join(", ") || "—"} · processor {item.source_rows?.processor?.join(", ") || "—"} · payout {item.source_rows?.payout?.join(", ") || "—"}</small></td>
+          <td>{Number(item.collection_liters).toLocaleString()} L <ArrowRight size={12} /> {Number(item.processor_liters).toLocaleString()} L</td>
+          <td><strong>{Number(item.volume_variance_liters).toFixed(1)} L</strong></td>
+          <td>{Number(item.gross_amount_kes).toLocaleString()} · {Number(item.deductions_kes).toLocaleString()} · <strong>{Number(item.net_amount_kes).toLocaleString()} KES</strong><small className="cell-sub">Processor arithmetic variance: {Number(item.processor_arithmetic_variance_kes).toFixed(2)} KES</small></td>
+          <td>{Number(item.payout_amount_kes).toLocaleString()} KES<small className="cell-sub">Variance to net: {Number(item.payout_variance_kes).toFixed(2)} KES</small></td>
+          <td><StatusPill tone={item.status === "reconciled" ? "green" : "amber"}>{item.status.replaceAll("_", " ")}</StatusPill>{item.issues?.length ? <small className="cell-sub">{item.issues.map((issue: string) => issue.replaceAll("_", " ")).join(" · ")}</small> : null}</td>
+          <td>{item.status === "reconciled" ? <StatusPill tone="green">Automatic match</StatusPill> : <div className="review-actions"><StatusPill tone={item.review_status === "accepted_with_note" ? "green" : "amber"}>{item.review_status.replaceAll("_", " ")}</StatusPill>{reviewOpen ? <><input aria-label={`Reviewer note for ${item.member_code}`} placeholder="Explain decision (3+ chars)" value={note} onChange={(event) => setReviewNotes((all) => ({ ...all, [item.id]: event.target.value }))} /><button type="button" className="button button-outline button-small" disabled={busy || note.trim().length < 3} onClick={() => reviewException(close.id, item.id, "accept_with_note", note.trim())}>Accept with note</button><button type="button" className="button button-outline button-small" disabled={busy || note.trim().length < 3} onClick={() => reviewException(close.id, item.id, "follow_up", note.trim())}>Record follow-up</button></> : <small className="cell-sub">{item.review_note}</small>}</div>}</td>
+        </tr>;
+      })}</tbody></table></div>
+      <div className="settlement-approval"><div><strong>{close.status === "approved" ? "Close approved by a named cooperative user" : "Cooperative sign-off required"}</strong><small>{close.status === "approved" ? `Approval note: ${close.approval_note}` : "Approval records accountability; it does not authorize or execute a bank or mobile-money payment."}</small></div>{close.status === "approved" ? <button type="button" className="button button-primary" onClick={() => downloadPack(close.id)}><Download size={15} />Download farmer statement pack</button> : <div className="settlement-approve-controls"><input aria-label="Close approval note" placeholder="Close approval note (5+ chars)" value={approvalNote} onChange={(event) => setApprovalNote(event.target.value)} /><button type="button" className="button button-primary" disabled={busy || close.pending_review_count > 0 || approvalNote.trim().length < 5} onClick={() => approveClose(close.id, approvalNote.trim())}><Check size={15} />Approve settlement close</button></div>}</div>
+      <small className="map-caption">Source files: {close.collection_filename}, {close.processor_filename}, {close.payout_filename}. Hashes: {Object.values(close.source_hashes || {}).map((hash: any) => String(hash).slice(0, 12)).join(" · ")}. A statement pack is an export for cooperative review and delivery; it is not proof that a bank transfer completed.</small>
+    </> : <div className="reconciliation-empty"><GitBranch size={20} /><div><strong>No payout period closed yet</strong><small>Import the three exports already used in your operation to reconcile volumes, processor arithmetic and payouts.</small></div></div>}
+  </section>;
 }

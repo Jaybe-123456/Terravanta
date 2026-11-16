@@ -1,18 +1,18 @@
 # Terravanta
 
-Terravanta is a veterinary-first farm-record product for Kenyan mixed farms. Its initial market wedge connects a farmer's dairy production and animal records to cooperative delivery summaries under explicit, revocable consent. Real-account mode is the default. It does not create synthetic records unless `ENABLE_SYNTHETIC_DATA=true` is explicitly set.
+Terravanta is a farm-record and operations product for Kenyan mixed farms. Its commercial direction is a system-agnostic milk settlement-assurance service for a cooperative or processor, with farmer-controlled records as the permissioned data layer. That service is a hypothesis, not validated product-market fit or an implemented payout workflow. Real-account mode is the default. It does not create synthetic records unless `ENABLE_SYNTHETIC_DATA=true` is explicitly set.
 
 The product has three role-specific workspaces:
 
 - **Farmer:** register farms, plots and animals; record health, feed, crop–livestock resources and production; trace deliveries; grant or revoke a cooperative's delivery-summary access.
 - **Veterinarian:** review assigned open cases, verify farmer-submitted health events, and create clinical records. A verification signature is separate from AI output.
-- **Cooperative administrator:** view only active, consented delivery summaries, reconciliation counts and missing delivery references. Clinical and laboratory records are excluded from this scope.
+- **Cooperative administrator:** view active, consented delivery summaries, reconcile settlement exports, review exceptions and approve a statement pack. Clinical and laboratory records are excluded from the cooperative sharing scope.
 
-See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), and the [market wedge, GTM and PMF validation plan](docs/GO_TO_MARKET.md).
+See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), and the [market wedge, GTM and PMF validation plan](docs/GO_TO_MARKET.md).
 
 To deploy the public API and managed PostGIS database on Render, use the [Render deployment guide](docs/RENDER_DEPLOYMENT.md) and the checked-in `render.yaml` Blueprint.
 
-The initial commercial workflow is a cooperative milk-reconciliation service: import a daily collection sheet, match it to delivery records shared with consent, review exceptions, and trace each intake row to its source. The upload contract, deterministic rules, reviewer loop and success measures are documented in [the reconciliation service contract](docs/COOPERATIVE_RECONCILIATION.md).
+The cooperative workspace now has two distinct jobs. The original intake workflow imports a daily collection sheet and matches rows to farmer-consented delivery records. The settlement-close workbench imports collection, processor settlement and payout exports, flags volume/amount discrepancies, requires named reviewer and close approval, and generates a statement-pack CSV. It uses deterministic backend rules and does not rely on NVIDIA, change source ledgers, initiate payments or claim validated savings. The contracts and limits are documented in [settlement close](docs/SETTLEMENT_CLOSE.md), while the proposed service, market risks and PMF gates are in [the market wedge plan](docs/GO_TO_MARKET.md).
 
 ## Run locally with Docker Compose
 

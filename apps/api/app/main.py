@@ -1,16 +1,19 @@
+import csv
 import json
 import hashlib
 import hmac
+import io
 import logging
 import re
 import secrets
 import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
@@ -27,14 +30,16 @@ from .models import (
     AIRequest, AIResponse, AccessCode, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
     FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot,
-    ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, User, UserRole,
+    ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, SettlementClose, SettlementCloseItem, User, UserRole,
 )
 from .schemas import (
     AccessCodeLogin, AccessCodeRequest, AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
+    SettlementApproveCreate, SettlementReviewCreate,
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
+from .settlement import parse_settlement_sources
 from .security import bearer, current_identity, current_user, issue_access_code_token, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
 from .seed import FARMER_ID, FARM_ID, seed
 
@@ -112,6 +117,8 @@ def dump(row, exclude: set[str] | None = None) -> dict:
             value = str(value)
         elif isinstance(value, (date, datetime)):
             value = value.isoformat()
+        elif isinstance(value, Decimal):
+            value = float(value)
         result[key] = value
     return result
 
@@ -891,6 +898,198 @@ def review_reconciliation_item(
     db.commit()
     db.refresh(run)
     return reconciliation_detail(db, run, active_shared_farms(db, user, organization_ids))
+
+
+def settlement_close_detail(db: Session, close: SettlementClose) -> dict:
+    items = db.query(SettlementCloseItem).filter_by(close_id=close.id).order_by(SettlementCloseItem.member_code).all()
+    reconciled = sum(item.status == "reconciled" for item in items)
+    pending = sum(item.review_status == "pending" for item in items)
+    return {
+        "close": {
+            "id": str(close.id), "organization_id": str(close.organization_id),
+            "period_start": close.period_start.isoformat(), "period_end": close.period_end.isoformat(),
+            "status": close.status, "member_count": len(items), "reconciled_count": reconciled,
+            "exception_count": len(items) - reconciled, "pending_review_count": pending,
+            "collection_filename": close.collection_filename, "processor_filename": close.processor_filename,
+            "payout_filename": close.payout_filename, "collection_row_count": close.collection_row_count,
+            "processor_row_count": close.processor_row_count, "payout_row_count": close.payout_row_count,
+            "source_hashes": {"collection": close.collection_sha256, "processor": close.processor_sha256, "payout": close.payout_sha256},
+            "approval_note": close.approval_note, "approved_by": str(close.approved_by) if close.approved_by else None,
+            "approved_at": close.approved_at.isoformat() if close.approved_at else None,
+            "created_at": close.created_at.isoformat(),
+        },
+        "items": [dump(item) for item in items],
+    }
+
+
+@app.post("/api/v1/cooperative/settlement-closes", status_code=201)
+async def create_settlement_close(
+    period_start: date = Form(...),
+    period_end: date = Form(...),
+    collection_file: UploadFile = File(...),
+    processor_file: UploadFile = File(...),
+    payout_file: UploadFile = File(...),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    organization_ids = cooperative_organization_ids(db, user)
+    files = {
+        "collection": (collection_file, "collection"),
+        "processor": (processor_file, "processor settlement"),
+        "payout": (payout_file, "payout"),
+    }
+    contents = {}
+    filenames = {}
+    for key, (upload, label) in files.items():
+        filename = Path(upload.filename or f"{key}.csv").name[:255]
+        if not filename.lower().endswith(".csv"):
+            raise HTTPException(415, f"Upload a CSV file for {label}")
+        content = await upload.read(5_000_001)
+        if len(content) > 5_000_000:
+            raise HTTPException(413, f"{label.title()} CSV is limited to 5 MB")
+        contents[key] = content
+        filenames[key] = filename
+    try:
+        parsed = parse_settlement_sources(contents["collection"], contents["processor"], contents["payout"], period_start, period_end)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    source_hashes = {key: hashlib.sha256(content).hexdigest() for key, content in contents.items()}
+    fingerprint_payload = "|".join([str(organization_ids[0]), period_start.isoformat(), period_end.isoformat(), *[source_hashes[key] for key in ("collection", "processor", "payout")]])
+    fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+    if db.query(SettlementClose).filter_by(organization_id=organization_ids[0], source_fingerprint=fingerprint).first():
+        raise HTTPException(409, "These exact source exports have already been used for this settlement period")
+    close = SettlementClose(
+        organization_id=organization_ids[0], created_by=user.id, period_start=period_start, period_end=period_end,
+        source_fingerprint=fingerprint, collection_filename=filenames["collection"], processor_filename=filenames["processor"],
+        payout_filename=filenames["payout"], collection_sha256=source_hashes["collection"],
+        processor_sha256=source_hashes["processor"], payout_sha256=source_hashes["payout"],
+        collection_row_count=parsed["collection_row_count"], processor_row_count=parsed["processor_row_count"],
+        payout_row_count=parsed["payout_row_count"], status="review_required",
+    )
+    db.add(close)
+    try:
+        db.flush()
+        for item in parsed["items"]:
+            db.add(SettlementCloseItem(
+                close_id=close.id, member_code=item["member_code"], collection_liters=item["collection_liters"],
+                processor_liters=item["processor_liters"], volume_variance_liters=item["volume_variance_liters"],
+                gross_amount_kes=item["gross_amount_kes"], deductions_kes=item["deductions_kes"],
+                net_amount_kes=item["net_amount_kes"], payout_amount_kes=item["payout_amount_kes"],
+                processor_arithmetic_variance_kes=item["processor_arithmetic_variance_kes"], payout_variance_kes=item["payout_variance_kes"],
+                status=item["status"], issues=item["issues"],
+                source_rows={"collection": item["collection_rows"], "processor": item["processor_rows"], "payout": item["payout_rows"]},
+                source_references={"collection": item["collection_references"], "processor": item["processor_references"], "payout": item["payout_references"]},
+                review_status=item["review_status"],
+            ))
+        audit(db, user, "cooperative.settlement_close_created", "settlement_close", str(close.id), metadata={
+            "period_start": period_start.isoformat(), "period_end": period_end.isoformat(),
+            "member_count": len(parsed["items"]), "source_hashes": source_hashes,
+        })
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "These exact source exports have already been used for this settlement period") from exc
+    db.refresh(close)
+    return settlement_close_detail(db, close)
+
+
+@app.get("/api/v1/cooperative/settlement-closes")
+def list_settlement_closes(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    organization_ids = cooperative_organization_ids(db, user)
+    closes = db.query(SettlementClose).filter_by(organization_id=organization_ids[0]).order_by(SettlementClose.created_at.desc()).limit(50).all()
+    return [settlement_close_detail(db, close)["close"] for close in closes]
+
+
+@app.get("/api/v1/cooperative/settlement-closes/{close_id}")
+def get_settlement_close(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    organization_ids = cooperative_organization_ids(db, user)
+    close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
+    if not close:
+        raise HTTPException(404, "Settlement close not found")
+    return settlement_close_detail(db, close)
+
+
+@app.post("/api/v1/cooperative/settlement-closes/{close_id}/items/{item_id}/review")
+def review_settlement_item(
+    close_id: UUID, item_id: UUID, body: SettlementReviewCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    organization_ids = cooperative_organization_ids(db, user)
+    close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
+    item = db.query(SettlementCloseItem).filter_by(id=item_id, close_id=close_id).first()
+    if not close or not item:
+        raise HTTPException(404, "Settlement exception not found")
+    if close.status == "approved":
+        raise HTTPException(409, "An approved close is immutable")
+    if item.status == "reconciled":
+        raise HTTPException(409, "This member row reconciled automatically and needs no exception review")
+    item.review_status = "accepted_with_note" if body.decision == "accept_with_note" else "follow_up"
+    item.reviewer_id = user.id
+    item.reviewed_at = datetime.now(timezone.utc)
+    item.review_note = body.note
+    audit(db, user, "cooperative.settlement_exception_reviewed", "settlement_close_item", str(item.id), metadata={
+        "close_id": str(close.id), "member_code": item.member_code, "decision": body.decision, "note": body.note,
+    })
+    db.commit()
+    return settlement_close_detail(db, close)
+
+
+@app.post("/api/v1/cooperative/settlement-closes/{close_id}/approve")
+def approve_settlement_close(
+    close_id: UUID, body: SettlementApproveCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    organization_ids = cooperative_organization_ids(db, user)
+    close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
+    if not close:
+        raise HTTPException(404, "Settlement close not found")
+    if close.status == "approved":
+        raise HTTPException(409, "This settlement close is already approved")
+    pending = db.query(SettlementCloseItem).filter(
+        SettlementCloseItem.close_id == close.id,
+        SettlementCloseItem.status != "reconciled",
+        SettlementCloseItem.review_status != "accepted_with_note",
+    ).count()
+    if pending:
+        raise HTTPException(409, f"Review all {pending} open exception(s) before approving this close")
+    close.status = "approved"
+    close.approved_by = user.id
+    close.approved_at = datetime.now(timezone.utc)
+    close.approval_note = body.note
+    audit(db, user, "cooperative.settlement_close_approved", "settlement_close", str(close.id), metadata={
+        "period_start": close.period_start.isoformat(), "period_end": close.period_end.isoformat(),
+        "approved_exception_count": db.query(SettlementCloseItem).filter_by(close_id=close.id, review_status="accepted_with_note").count(),
+    })
+    db.commit()
+    return settlement_close_detail(db, close)
+
+
+def spreadsheet_safe_cell(value):
+    text_value = str(value if value is not None else "")
+    if text_value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + text_value
+    return text_value
+
+
+@app.get("/api/v1/cooperative/settlement-closes/{close_id}/statement-pack")
+def download_settlement_statement_pack(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    organization_ids = cooperative_organization_ids(db, user)
+    close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
+    if not close:
+        raise HTTPException(404, "Settlement close not found")
+    if close.status != "approved":
+        raise HTTPException(409, "Approve the close before downloading its statement pack")
+    rows = db.query(SettlementCloseItem).filter_by(close_id=close.id).order_by(SettlementCloseItem.member_code).all()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["member_code", "period_start", "period_end", "collection_liters", "processor_liters", "volume_variance_liters", "gross_amount_kes", "deductions_kes", "net_amount_kes", "payout_amount_kes", "payout_variance_kes", "reconciliation_status", "review_status", "review_note"])
+    for item in rows:
+        writer.writerow([spreadsheet_safe_cell(item.member_code), close.period_start.isoformat(), close.period_end.isoformat(), item.collection_liters, item.processor_liters, item.volume_variance_liters, item.gross_amount_kes, item.deductions_kes, item.net_amount_kes, item.payout_amount_kes, item.payout_variance_kes, item.status, item.review_status, spreadsheet_safe_cell(item.review_note)])
+    audit(db, user, "cooperative.settlement_statement_pack_downloaded", "settlement_close", str(close.id), metadata={"row_count": len(rows)})
+    db.commit()
+    filename = f"terravanta-settlement-{close.period_start.isoformat()}-{close.period_end.isoformat()}.csv"
+    return Response(content=output.getvalue(), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/v1/cooperative/deliveries")

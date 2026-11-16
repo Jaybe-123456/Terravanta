@@ -214,6 +214,26 @@ a { color: inherit; }
 .trace-panel { border-top: 1px solid #edf0ed; padding-top: 13px; }.trace-items { display: grid; gap: 6px; margin-top: 10px; }.trace-row { display: flex; align-items: center; gap: 11px; padding: 7px 8px; background: #fafbf9; border: 1px solid #edf0eb; border-radius: 7px; }.trace-row-label { min-width: 43px; color: #89958a; font-size: 8px; }.trace-nodes { display: flex; gap: 4px; align-items: center; overflow-x: auto; }.trace-node { display: inline-flex; gap: 4px; align-items: center; color: #758278; white-space: nowrap; }.trace-node b { padding: 5px 7px; border-radius: 5px; background: #f0f3ef; color: #46574b; font-size: 8px; font-weight: 600; text-transform: capitalize; }.trace-node.farm b, .trace-node.product_lot b { background: #edf5ea; color: #487049; }.trace-node.cooperative_intake b, .trace-node.delivery b { background: #eef3f8; color: #54718a; }.trace-node.exception b { background: #fbf2e3; color: #95702d; }
 .trace-node.production_record b { background: #eef3f8; color: #54718a; }
 
+.settlement-workbench { border-color: #dce7da; box-shadow: 0 8px 30px #24492c08; }
+.settlement-import { display: grid; gap: 12px; padding: 14px; border: 1px solid #e8ede6; border-radius: 10px; background: #fbfcfa; }
+.settlement-period { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 560px; }
+.settlement-files { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.settlement-file { display: grid; align-content: space-between; gap: 10px; min-height: 128px; padding: 12px; border: 1px dashed #cad9c7; border-radius: 8px; background: #fff; }
+.settlement-file > span { display: grid; align-content: start; gap: 6px; }
+.settlement-file strong { color: #3d5143; font-size: 10px; }
+.settlement-file small { color: #7f8a81; font-size: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.settlement-file input { width: 100%; max-width: 100%; color: #647468; font-size: 9px; }
+.settlement-file input::file-selector-button { margin-right: 7px; border: 1px solid #dfe6dd; border-radius: 5px; background: #f7f9f6; color: #405446; padding: 5px 7px; font: inherit; cursor: pointer; }
+.settlement-approval { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px; border: 1px solid #e6ece3; border-radius: 8px; background: #f8faf7; }
+.settlement-approval > div:first-child { display: grid; gap: 4px; }
+.settlement-approval strong { color: #405446; font-size: 10px; }
+.settlement-approval small { color: #7f8a81; font-size: 9px; line-height: 1.5; }
+.settlement-approve-controls { display: flex; align-items: center; gap: 7px; }
+.settlement-approve-controls input { min-width: 220px; height: 34px; border: 1px solid #dfe6dd; border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 9px; }
+.settlement-workbench .reconciliation-table table { min-width: 1180px; }
+.settlement-workbench .reconciliation-table td:nth-child(5), .settlement-workbench .reconciliation-table td:nth-child(6) { min-width: 150px; }
+.settlement-workbench .reconciliation-table td:nth-child(7) { min-width: 230px; }
+
 @media (max-width: 1100px) {
   .content-wrap { padding-left: 24px; padding-right: 24px; }.topbar { padding: 0 24px; }.stats-grid { gap: 9px; }.stat-card { padding: 12px; }.welcome-art { left: 42%; }.main-two-col { grid-template-columns: 1fr; }.resource-cycle { gap: 3px; }.cycle-node { min-width: 56px; }.cycle-node strong { font-size: 8px; }.cycle-node small { font-size: 7px; }
 }
@@ -227,6 +247,11 @@ a { color: inherit; }
   .reconciliation-controls { grid-template-columns: 1fr; }
   .reconciliation-card .panel-title { flex-direction: column; }
   .reconciliation-summary { gap: 12px; }
+  .settlement-files { grid-template-columns: 1fr; }
+  .settlement-file { min-height: 0; }
+  .settlement-approval { align-items: stretch; flex-direction: column; }
+  .settlement-approve-controls { align-items: stretch; flex-direction: column; }
+  .settlement-approve-controls input { width: 100%; min-width: 0; }
 }
 @media (max-width: 500px) {
   .run-chip { min-width: 180px; }
