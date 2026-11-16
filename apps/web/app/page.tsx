@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
+import { TerrasWidget } from "@/components/terras-widget";
 import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, requestAccessCode as requestEmailCode, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
@@ -469,6 +470,7 @@ export default function Home() {
       </div>
       <footer className="page-footer"><span>Terravanta</span><span>Records stay attributed to their source · {farm?.code || "consent-controlled"}</span><a href={`${API_URL}/docs`} target="_blank" rel="noreferrer">API documentation <ArrowRight size={13} /></a></footer>
     </main>
+    <TerrasWidget token={token} role={role} farmId={farmId} onNavigate={onNav} onSaved={reload} />
     {toast ? <div role="status" className={`toast ${toast.error ? "error" : ""}`}><span>{toast.error ? <AlertTriangle size={17} /> : <Check size={17} />}{toast.text}</span><button aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={16} /></button></div> : null}
     <div className="sr-only" aria-live="polite">{loading ? "Loading records" : "Records loaded"}</div>
   </div>;
@@ -731,6 +733,14 @@ function CooperativeOverview({ closes, deliveries, onNavigate, openClose }: AnyR
     <section className="coop-hero">
       <div className="coop-hero-copy"><p className="coop-kicker">COOPERATIVE FINANCE WORKSPACE</p><h2>Close each payout period with evidence.</h2><p>Bring collection, processor settlement and payout exports into one review queue. Your team owns every exception and approval.</p><div className="coop-hero-actions"><button className="button coop-primary-button" onClick={() => onNavigate("settlements")}>{latest ? "Open settlement desk" : "Start first settlement close"}<ArrowRight size={15} /></button><button className="coop-text-button" onClick={() => onNavigate("traceability")}>Review consented delivery records</button></div></div>
       <div className="coop-latest-card"><div className="coop-latest-top"><span>Most recent period</span><StatusPill tone={latest?.status === "approved" ? "green" : latest ? "amber" : "neutral"}>{latestStatus}</StatusPill></div>{latest ? <><strong>{latest.period_start} <span>to</span> {latest.period_end}</strong><div className="coop-latest-meta"><span>{latest.member_count} member rows</span><span>{latest.unresolved_exception_count ?? latest.pending_review_count ?? 0} unresolved</span></div><button type="button" className="coop-inline-link" onClick={() => openPeriod(latest.id)}>Continue this close <ArrowRight size={14} /></button></> : <><strong>No period imported</strong><p>Start with one completed period using your existing exports.</p></>}</div>
+    </section>
+
+    <section className="card coop-video-feature" aria-labelledby="coop-explainer-title">
+      <div className="coop-video-copy"><p className="eyebrow">THE FIRST TERRAVANTA SERVICE</p><h2 id="coop-explainer-title">A payout close your team can review.</h2><p>See how the three source exports move through matching, exception review, cooperative sign-off and a traceable statement pack.</p><span className="coop-video-note"><ShieldCheck size={14} />Silent product preview · all displayed rows are illustrative and synthetic</span></div>
+      <video className="coop-explainer-video" controls playsInline preload="metadata" poster="/videos/terravanta-payout-close-poster.png" aria-label="Terravanta cooperative payout close workflow explainer">
+        <source src="/videos/terravanta-payout-close.mp4" type="video/mp4" />
+        Your browser does not support the Terravanta explainer video.
+      </video>
     </section>
 
     <section className="coop-kpis" aria-label="Cooperative activity indicators">

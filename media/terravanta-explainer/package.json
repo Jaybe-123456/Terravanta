@@ -1,0 +1,15 @@
+{
+  "name": "terravanta-explainer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.9.58 preview",
+    "check": "npx --yes hyperframes@0.9.58 check",
+    "render": "npx --yes hyperframes@0.9.58 render",
+    "render:reviewed": "node render_from_reviewed_frames.mjs",
+    "publish": "npx --yes hyperframes@0.9.58 publish"
+  },
+  "dependencies": {
+    "gsap": "3.15.0"
+  }
+}

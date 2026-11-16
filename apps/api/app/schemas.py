@@ -216,6 +216,17 @@ class AssistantRequest(BaseModel):
     allow_external_processing: bool = False
 
 
+class TerrasRouteRequest(BaseModel):
+    message: str = Field(min_length=2, max_length=600)
+
+    @model_validator(mode="after")
+    def normalize_message(self):
+        self.message = self.message.strip()
+        if len(self.message) < 2:
+            raise ValueError("Tell Terras what you want to do")
+        return self
+
+
 class ExtractedDocumentDraft(BaseModel):
     document_type: str | None = Field(default=None, max_length=120)
     animal_tag: str | None = Field(default=None, max_length=120)

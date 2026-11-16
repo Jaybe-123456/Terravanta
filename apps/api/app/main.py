@@ -37,6 +37,7 @@ from .schemas import (
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
     SettlementApproveCreate, SettlementReviewCreate,
+    TerrasRouteRequest,
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
 from .settlement import parse_settlement_sources
@@ -1142,6 +1143,93 @@ def build_alerts(db: Session, farm: Farm) -> list[dict]:
 def get_alerts(user: User = Depends(current_user), db: Session = Depends(get_db)):
     farm = primary_farm(db, user)
     return build_alerts(db, farm)
+
+
+@app.post("/api/v1/terras/route")
+def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Role-scoped, deterministic routing. This endpoint never writes farm data or calls a model."""
+    role = user_role(db, user)
+    message = body.message.lower()
+    allowed_sections = {
+        "farmer": ["overview", "farms", "veterinary", "crops", "feed", "production", "traceability", "assistant", "reports", "settings"],
+        "veterinarian": ["overview", "veterinary", "assistant", "settings"],
+        "cooperative_admin": ["overview", "settlements", "traceability", "reports", "settings"],
+        "platform_admin": ["overview", "farms", "veterinary", "crops", "feed", "production", "traceability", "assistant", "settlements", "reports", "settings"],
+    }.get(role)
+    if not allowed_sections:
+        raise HTTPException(403, "Terras is unavailable until an authorized workspace role is assigned")
+
+    def routed(section: str, intent: str, reply: str, api_workflow: str | None = None, draft: dict | None = None, required_inputs: list[str] | None = None):
+        if section not in allowed_sections:
+            section = "overview"
+            intent = "role_limited"
+            reply = "That workflow is not available to your workspace role. I can help you find records and tasks your role is allowed to access."
+            api_workflow = None
+            draft = None
+            required_inputs = []
+        return {
+            "reply": reply,
+            "mode": "local_rules",
+            "intent": intent,
+            "destination": section,
+            "api_workflow": api_workflow,
+            "draft": draft,
+            "required_inputs": required_inputs or [],
+            "requires_confirmation": bool(draft or (api_workflow and api_workflow.startswith("POST "))),
+            "external_model_used": False,
+            "safety_note": "Terras can prepare a draft or open an existing workflow. Existing API permissions still apply, and a person must review and submit every change.",
+        }
+
+    payout_terms = ("payout", "settlement", "reconcile", "close period", "close the period", "member close")
+    production_terms = ("milk", "production", "harvest")
+    if role != "cooperative_admin" and any(term in message for term in payout_terms):
+        return routed("overview", "role_limited", "Payout close is restricted to authorized cooperative members. I can route you to the records and tasks available in your workspace.")
+    if role not in {"farmer", "platform_admin"} and any(term in message for term in production_terms):
+        return routed("overview", "role_limited", "Production records can be entered by the farm owner or an authorized platform administrator. I can route you to casework available in your workspace.")
+
+    if role == "cooperative_admin":
+        if any(term in message for term in payout_terms):
+            cooperative_organization_ids(db, user)  # Enforce cooperative membership before surfacing the workflow.
+            return routed(
+                "settlements", "payout_close",
+                "Open Payout settlements to reconcile the collection, processor settlement, and payout exports. Terravanta checks their recorded arithmetic; your reviewer resolves exceptions and a cooperative approver signs off. It does not send payments.",
+                "POST /api/v1/cooperative/settlement-closes",
+                required_inputs=["Collection CSV", "Processor settlement CSV", "Farmer payout CSV", "Close period"],
+            )
+        if any(term in message for term in ("delivery", "shared member", "consent", "farmer records")):
+            cooperative_organization_ids(db, user)
+            return routed("traceability", "consented_member_records", "Open Shared member records to review only records farmers have actively shared with your cooperative.", "GET /api/v1/cooperative/deliveries")
+        if "history" in message or "archive" in message:
+            cooperative_organization_ids(db, user)
+            return routed("reports", "close_history", "Open Close history to review previous payout periods, exception counts, and approval notes.", "GET /api/v1/cooperative/settlement-closes")
+        return routed("overview", "cooperative_navigation", "I can take you to payout close, close history, or consented member delivery records. Try asking about a payout close or shared deliveries.")
+
+    if role in {"farmer", "platform_admin"} and any(term in message for term in ("milk", "production", "harvest")):
+        farm = primary_farm(db, user)
+        milk_quantity = re.search(r"\b(\d+(?:\.\d+)?)\s*(?:litres?|liters?|l)\b", message)
+        if "milk" in message and milk_quantity:
+            quantity = float(milk_quantity.group(1))
+            if quantity <= 0:
+                return routed("production", "record_milk", "Enter a quantity greater than zero liters and I can prepare the draft.", required_inputs=["Quantity in liters"])
+            draft = {"product_type": "milk", "quantity": quantity, "unit": "liters"}
+            return routed(
+                "production", "record_milk",
+                f"I prepared a {quantity:g}-liter milk production draft for {farm.name}. Set the correct record date, review it, then choose Review and save to create the record.",
+                f"POST /api/v1/farms/{farm.id}/production-records", draft,
+            )
+        if "milk" in message:
+            return routed("production", "record_milk", "How many liters of milk should I prepare a draft for? You can set the record date before saving.", required_inputs=["Quantity in liters", "Record date"])
+        return routed("production", "record_production", "Open Production to record milk, crop harvest, or another product. Tell me a quantity and unit if you want me to prepare a draft.", f"POST /api/v1/farms/{farm.id}/production-records", required_inputs=["Product type", "Quantity", "Unit", "Record date"])
+
+    if any(term in message for term in ("animal", "vet", "veterinary", "case", "clinical")):
+        return routed("veterinary", "veterinary_records", "Open Veterinary to review the animal or assigned case history. Terras does not diagnose, prescribe, or verify a clinical record.", "GET /api/v1/veterinary/queue" if role == "veterinarian" else None)
+    if any(term in message for term in ("feed", "fodder", "ration", "nutrition")):
+        return routed("feed", "feed_records", "Open Feed & nutrition to review feed batches, allocations, and recorded stock.")
+    if any(term in message for term in ("plot", "crop", "compost", "soil")):
+        return routed("crops", "crop_records", "Open Crops & plots to review crop seasons, plots, and the recorded compost links.")
+    if any(term in message for term in ("delivery", "buyer", "traceability", "share", "consent")):
+        return routed("traceability", "traceability", "Open Traceability to review product lots, deliveries, and consent-controlled sharing.")
+    return routed("overview", "navigation_help", "Tell me the outcome you need—such as a payout close, milk record, feed allocation, veterinary case, or delivery—and I’ll route you to the existing Terravanta workflow.")
 
 
 @app.post("/api/v1/ai/veterinary-assistant")

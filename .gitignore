@@ -3,6 +3,9 @@
 !.env.example
 !.env.production.example
 node_modules/
+/media/terravanta-explainer/.tools/
+/media/terravanta-explainer/.hyperframes-cache/
+/media/terravanta-explainer/.hyperframes/
 .next/
 build-output/
 .turbo/

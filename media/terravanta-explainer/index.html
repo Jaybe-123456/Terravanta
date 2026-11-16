@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Terravanta · Cooperative payout close</title>
+    <script src="./node_modules/gsap/dist/gsap.min.js"></script>
+    <style>
+      :root { --forest: #244d35; --forest-dark: #183b28; --sage: #dfeadb; --ink: #20352a; --muted: #718076; --paper: #f5f7f3; --line: #e4eae2; --amber: #b27b21; --red: #b55d4d; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--paper); font-family: Inter, "Segoe UI", Arial, sans-serif; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; color: var(--ink); background: radial-gradient(circle at 78% 44%, #ebf2e8 0, transparent 32%), linear-gradient(130deg, #f9faf7, #eef3ec); }
+      .topline { position: absolute; z-index: 5; top: 0; left: 0; right: 0; height: 76px; display: flex; align-items: center; padding: 0 84px; border-bottom: 1px solid #dfe7dd; background: #fbfcf9e8; }
+      .brand { display: flex; align-items: center; gap: 12px; color: var(--forest-dark); font-weight: 760; font-size: 20px; letter-spacing: -.6px; }
+      .brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 10px; color: var(--forest); background: #e6efe3; }
+      .brand-mark svg { width: 21px; height: 21px; }
+      .brand small { display: block; margin-top: 3px; color: #526257; font-size: 8px; letter-spacing: 1.5px; }
+      .top-meta { margin-left: auto; display: flex; align-items: center; gap: 14px; color: #536157; font-size: 9px; letter-spacing: 1px; font-weight: 700; }
+      .top-meta .dot { width: 7px; height: 7px; border-radius: 50%; background: #8ca774; }
+      .clip { position: absolute; inset: 76px 0 0; width: 1920px; height: 1004px; padding: 76px 84px 80px; opacity: 1; overflow: hidden; }
+      .scene-kicker { color: #526759; font-size: 11px; font-weight: 760; letter-spacing: 1.6px; }
+      .scene-copy { position: relative; z-index: 3; max-width: 730px; }
+      h1 { max-width: 720px; margin: 18px 0 16px; color: #193c29; font-size: 70px; line-height: 1.03; letter-spacing: -3.5px; font-weight: 650; }
+      .scene-subtitle { max-width: 600px; margin: 0; color: #536157; font-size: 22px; line-height: 1.5; }
+      .scene-foot { position: absolute; bottom: 31px; left: 84px; color: #56645a; font-size: 9px; letter-spacing: .35px; }
+      .visual-label { color: #4d5f52; font-size: 9px; font-weight: 760; letter-spacing: 1.1px; }
+      .scene-1 { background: linear-gradient(114deg, #f8faf6 0%, #f3f6f1 55%, #e7efe4 100%); }
+      .scene-1 .scene-copy { margin-top: 82px; }
+      .scene-1 h1 { max-width: 680px; }
+      .source-stack { position: absolute; right: 96px; top: 130px; width: 850px; height: 620px; object-fit: contain; filter: drop-shadow(0 24px 30px #1b3a2519); }
+      .source-tags { position: absolute; right: 125px; bottom: 188px; display: flex; gap: 9px; }
+      .source-tags span { padding: 10px 13px; border: 1px solid #dfe7dc; border-radius: 6px; color: #526b57; background: #fbfcf9ef; font-size: 9px; font-weight: 740; letter-spacing: .7px; box-shadow: 0 6px 15px #243c280a; }
+      .scene-2 { background: #f7f9f6; }
+      .scene-2 .scene-copy { max-width: 710px; margin-top: 18px; }
+      .scene-2 h1, .scene-3 h1, .scene-4 h1 { font-size: 57px; letter-spacing: -2.6px; }
+      .ledger { position: absolute; right: 84px; top: 105px; width: 855px; height: 650px; padding: 25px; border: 1px solid #e1e8df; border-radius: 18px; background: #fff; box-shadow: 0 26px 65px #19392314; }
+      .ledger-head { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 19px; border-bottom: 1px solid #edf0ec; }
+      .ledger-head strong { display: block; margin-top: 7px; color: #294534; font-size: 18px; font-weight: 640; }
+      .period-pill { padding: 8px 10px; border: 1px solid #e6ebe2; border-radius: 6px; color: #526254; font-size: 9px; }
+      .ledger-columns, .ledger-row { display: grid; grid-template-columns: 1.05fr 1fr .9fr .8fr; align-items: center; gap: 10px; }
+      .ledger-columns { height: 42px; color: #5b685d; font-size: 8px; letter-spacing: .7px; font-weight: 730; }
+      .ledger-row { min-height: 76px; border-top: 1px solid #f0f2ef; color: #425348; font-size: 11px; opacity: 0; }
+      .member { display: flex; align-items: center; gap: 9px; font-weight: 670; }
+      .member-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: #4b6a4b; background: #edf4ea; font-size: 9px; }
+      .row-muted { color: #536157; font-size: 10px; }
+      .status { justify-self: start; padding: 6px 8px; border-radius: 20px; font-size: 8px; font-weight: 720; }
+      .status.ok { color: #406746; background: #e9f3e7; }
+      .status.review { color: #765217; background: #fbf1dc; }
+      .ledger-note { display: flex; gap: 8px; align-items: center; margin-top: 14px; padding: 11px 12px; border-radius: 7px; color: #536157; background: #f5f8f3; font-size: 9px; }
+      .ledger-note strong { color: #496b4d; }
+      .flow-mark { position: absolute; left: 750px; top: 345px; z-index: 2; display: grid; place-items: center; width: 74px; height: 74px; border: 1px solid #d8e4d4; border-radius: 50%; color: #4e7854; background: #f9fbf8; box-shadow: 0 7px 20px #23442d14; font-size: 22px; }
+      .scene-3 { background: linear-gradient(120deg, #f7f9f5, #edf3ea); }
+      .scene-3 .scene-copy { margin-top: 20px; }
+      .review-board { position: absolute; right: 90px; top: 118px; width: 900px; height: 650px; display: grid; grid-template-columns: 1.04fr .96fr; gap: 15px; }
+      .review-table, .review-card { border: 1px solid #e1e9df; border-radius: 15px; background: white; box-shadow: 0 20px 54px #1b39240c; }
+      .review-table { padding: 22px; }
+      .review-table h3 { margin: 10px 0 18px; color: #314b38; font-size: 17px; font-weight: 620; }
+      .variance-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; padding: 14px 0; border-top: 1px solid #edf0eb; opacity: 0; }
+      .variance-row strong { display: block; color: #43554a; font-size: 11px; }
+      .variance-row small { display: block; margin-top: 5px; color: #8b968d; font-size: 9px; }
+      .variance-delta { color: #83541f; white-space: nowrap; font-size: 10px; font-weight: 700; }
+      .review-card { align-self: center; padding: 24px; }
+      .review-card-top { display: flex; justify-content: space-between; align-items: center; }
+      .review-card h3 { margin: 15px 0 6px; color: #2f4937; font-size: 20px; }
+      .review-card p { color: #536157; font-size: 10px; line-height: 1.6; }
+      .reviewer { display: flex; align-items: center; gap: 10px; margin: 18px 0; padding: 11px; border: 1px solid #edf0ec; border-radius: 8px; }
+      .reviewer-badge { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #607c61; font-size: 9px; font-weight: 750; }
+      .reviewer strong, .reviewer small { display: block; }
+      .reviewer strong { color: #4a5d4e; font-size: 9px; }
+      .reviewer small { margin-top: 4px; color: #546056; font-size: 8px; }
+      .note-field { height: 90px; padding: 11px; border: 1px solid #e6ebe4; border-radius: 7px; color: #4e5b51; background: #fbfcfa; font-size: 9px; line-height: 1.5; }
+      .review-actions { display: flex; gap: 8px; margin-top: 12px; }
+      .review-actions span { flex: 1; padding: 10px 4px; border-radius: 6px; text-align: center; font-size: 8px; font-weight: 700; }
+      .review-actions span:first-child { color: #fff; background: #315b3b; }
+      .review-actions span:last-child { color: #8c661f; border: 1px solid #eadfc5; background: #fffdf8; }
+      .scene-4 { background: linear-gradient(119deg, #f7f9f5 0%, #eef3ec 60%, #e9f0e6 100%); }
+      .scene-4 .scene-copy { max-width: 665px; margin-top: 24px; }
+      .approval-board { position: absolute; right: 125px; top: 144px; width: 730px; height: 580px; }
+      .approval-card { position: absolute; top: 0; left: 0; width: 625px; min-height: 420px; padding: 29px; border: 1px solid #e0e8de; border-radius: 16px; background: #fff; box-shadow: 0 23px 58px #19392314; }
+      .approval-top { display: flex; justify-content: space-between; align-items: center; padding-bottom: 19px; border-bottom: 1px solid #edf0ec; }
+      .approval-title strong { display: block; margin-top: 7px; color: #294533; font-size: 18px; }
+      .approved-chip { padding: 7px 10px; border-radius: 18px; color: #4a7850; background: #eaf3e8; font-size: 8px; font-weight: 740; }
+      .approval-metric { display: flex; justify-content: space-between; padding: 17px 0; border-bottom: 1px solid #f0f2ef; color: #536157; font-size: 10px; opacity: 0; }
+      .approval-metric strong { color: #3b5140; font-size: 10px; }
+      .statement-pack { position: absolute; right: 0; bottom: 16px; width: 330px; height: 228px; padding: 20px; border: 1px solid #dce7d9; border-radius: 12px; background: #fbfdf9; box-shadow: 0 16px 34px #1c3b2518; }
+      .statement-pack .sheet-icon { width: 38px; height: 38px; display: grid; place-items: center; color: #406d48; border-radius: 10px; background: #e7f0e3; font-size: 18px; }
+      .statement-pack strong { display: block; margin-top: 12px; color: #35533c; font-size: 13px; }
+      .statement-pack small { display: block; margin-top: 4px; color: #536157; font-size: 8px; }
+      .sheet-lines { display: grid; gap: 6px; margin-top: 14px; }
+      .sheet-lines i { display: block; height: 4px; border-radius: 3px; background: #e4ebe2; }
+      .sheet-lines i:nth-child(1) { width: 88%; }.sheet-lines i:nth-child(2) { width: 68%; }.sheet-lines i:nth-child(3) { width: 78%; }
+      .payment-boundary { position: absolute; right: 180px; top: 467px; width: 185px; padding: 12px; border: 1px solid #eadfca; border-radius: 8px; color: #8b6927; background: #fffaf0; font-size: 8px; line-height: 1.45; }
+      .scene-5 { color: #fff; background: radial-gradient(circle at 80% 25%, #42704a 0%, transparent 38%), linear-gradient(123deg, #183d29, #244d35 62%, #315d3b); }
+      .scene-5 .scene-copy { max-width: 905px; margin-top: 96px; }
+      .scene-5 .scene-kicker { color: #d7e6d3; }
+      .scene-5 h1 { max-width: 930px; color: #fff; font-size: 76px; }
+      .scene-5 .scene-subtitle { max-width: 690px; color: #d7e4d3; font-size: 21px; }
+      .pilot-box { position: absolute; right: 125px; top: 220px; width: 420px; padding: 24px; border: 1px solid #ffffff2b; border-radius: 14px; background: #ffffff0c; box-shadow: 0 18px 54px #11281930; }
+      .pilot-box > span { color: #e0ebdc; font-size: 9px; letter-spacing: 1.1px; font-weight: 740; }
+      .pilot-box strong { display: block; margin-top: 12px; color: #fff; font-size: 21px; line-height: 1.3; }
+      .pilot-box p { color: #eff5ed; font-size: 11px; line-height: 1.6; }
+      .pilot-steps { display: grid; gap: 10px; margin-top: 20px; }
+      .pilot-steps span { display: flex; gap: 9px; align-items: center; color: #e0e9de; font-size: 9px; }
+      .pilot-steps i { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; color: #254a32; background: #c4d9bf; font-size: 8px; font-style: normal; font-weight: 800; }
+      .scene-5 .scene-foot { color: #e1ebdf; }
+      .timed { will-change: transform, opacity; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="terravanta-close" data-start="0" data-duration="30" data-width="1920" data-height="1080" data-fps="30">
+      <header class="topline"><div class="brand"><span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4c-8 0-14 3-14 10a6 6 0 0 0 6 6c7 0 10-6 8-16Z"/><path d="M4 21c3-6 7-9 13-12"/></svg></span><span>Terravanta<small data-layout-ignore>FARM INTELLIGENCE</small></span></div><div class="top-meta"><span data-layout-ignore>COOPERATIVE PAYOUT CLOSE</span><span class="dot"></span><span data-layout-ignore>SILENT PREVIEW · FOUNDER VOICEOVER PENDING</span></div></header>
+
+      <section id="scene-source-files" class="clip scene-1" data-start="0" data-duration="6" data-track-index="0" data-hold>
+        <div class="scene-copy timed"><span class="scene-kicker">COOPERATIVE FINANCE · ONE COMPLETED PERIOD</span><h1>One payout close.<br />Three source files.</h1><p class="scene-subtitle">Collection, processor settlement and farmer payout exports arrive in different formats.</p></div>
+        <img class="source-stack timed" src="assets/export-stack.svg" alt="Three stylized settlement export documents" />
+        <div class="source-tags"><span>COLLECTION</span><span>PROCESSOR SETTLEMENT</span><span>FARMER PAYOUT</span></div>
+        <span class="scene-foot">No live member information is shown in this product preview.</span>
+      </section>
+
+      <section id="scene-reconcile" class="clip scene-2" data-start="6" data-duration="6" data-track-index="1" data-hold>
+        <div class="scene-copy timed"><span class="scene-kicker">01 · IMPORT AND COMPARE</span><h1>Bring the period into one review queue.</h1><p class="scene-subtitle">Terravanta compares member delivery volume, processor arithmetic and payout amounts across the uploaded exports.</p></div>
+        <div class="flow-mark timed">→</div>
+        <div class="ledger timed"><div class="ledger-head"><div><span class="visual-label">PAYOUT CLOSE · SOURCE ROW CHECKS</span><strong>Member reconciliation</strong></div><span class="period-pill">Illustrative period · synthetic records</span></div>
+          <div class="ledger-columns"><span>MEMBER</span><span>COLLECTION → PROCESSOR</span><span>PAYOUT CHECK</span><span>STATUS</span></div>
+          <div class="ledger-row"><span class="member"><i class="member-icon">01</i>MEM-KBU-014</span><span class="row-muted">Volume aligned</span><span class="row-muted">Arithmetic checked</span><span class="status ok">MATCHED</span></div>
+          <div class="ledger-row"><span class="member"><i class="member-icon">02</i>MEM-KBU-027</span><span class="row-muted">Volume aligned</span><span class="row-muted">Arithmetic checked</span><span class="status ok">MATCHED</span></div>
+          <div class="ledger-row"><span class="member"><i class="member-icon">03</i>MEM-KBU-031</span><span class="row-muted">Variance found</span><span class="row-muted">Payout differs</span><span class="status review">REVIEW</span></div>
+          <div class="ledger-note"><strong>Rules are visible.</strong><span>Every comparison links back to its source rows and references.</span></div>
+        </div>
+        <span class="scene-foot">Illustrative synthetic records · outcomes are example UI, not pilot results.</span>
+      </section>
+
+      <section id="scene-review" class="clip scene-3" data-start="12" data-duration="6" data-track-index="2" data-hold>
+        <div class="scene-copy timed"><span class="scene-kicker">02 · ROUTE EXCEPTIONS TO A PERSON</span><h1>Automation finds the gap.<br />Your team decides.</h1><p class="scene-subtitle">Unmatched rows and variances stay open until a named reviewer records a decision and note.</p></div>
+        <div class="review-board timed"><div class="review-table"><span class="visual-label">EXCEPTION QUEUE · EXAMPLE ROWS</span><h3>Items needing review</h3>
+          <div class="variance-row"><div><strong>MEM-KBU-031 · payout variance</strong><small>Collection and settlement references attached</small></div><span class="variance-delta">Needs review</span></div>
+          <div class="variance-row"><div><strong>MEM-KBU-042 · missing payout row</strong><small>Source row absent from payout export</small></div><span class="variance-delta">Follow up</span></div>
+          <div class="variance-row"><div><strong>MEM-KBU-055 · period mismatch</strong><small>Record date is outside the selected close</small></div><span class="variance-delta">Follow up</span></div>
+        </div><div class="review-card"><div class="review-card-top"><span class="visual-label">REVIEW ASSIGNMENT</span><span class="status review">OPEN</span></div><h3>Human review required</h3><p>The exception remains unresolved until a cooperative user chooses an outcome and records supporting context.</p><div class="reviewer"><span class="reviewer-badge">CR</span><span><strong>Cooperative reviewer</strong><small>Signed-in user · audit attributed</small></span></div><div class="note-field">Reviewer note: compare with the signed processor advice before accepting this row.</div><div class="review-actions"><span>Accept with note</span><span>Follow up</span></div></div></div>
+        <span class="scene-foot">Terravanta does not label discrepancies as fraud or make payment decisions.</span>
+      </section>
+
+      <section id="scene-approve" class="clip scene-4" data-start="18" data-duration="6" data-track-index="3" data-hold>
+        <div class="scene-copy timed"><span class="scene-kicker">03 · APPROVE AND EXPORT</span><h1>Sign off with evidence attached.</h1><p class="scene-subtitle">After open exceptions are resolved, an authorized cooperative approver can approve the close and export a member statement pack.</p></div>
+        <div class="approval-board timed"><div class="approval-card"><div class="approval-top"><div class="approval-title"><span class="visual-label">COOPERATIVE CLOSE · AUDIT TRAIL</span><strong>Period review summary</strong></div><span class="approved-chip">APPROVED BY COOPERATIVE</span></div><div class="approval-metric"><span>Exception decisions</span><strong>Reviewer, decision and note recorded</strong></div><div class="approval-metric"><span>Close approval</span><strong>Named approver and timestamp</strong></div><div class="approval-metric"><span>Statement pack</span><strong>Source-linked export available</strong></div></div><div class="statement-pack"><span class="sheet-icon">▤</span><strong>Member statement pack</strong><small>CSV export · linked to source period</small><div class="sheet-lines"><i></i><i></i><i></i></div></div><div class="payment-boundary">Payments remain in your existing bank or mobile-money process.</div></div>
+        <span class="scene-foot">Approval records accountability. It does not initiate or certify a payment.</span>
+      </section>
+
+      <section id="scene-pilot" class="clip scene-5" data-start="24" data-duration="6" data-track-index="4" data-hold>
+        <div class="scene-copy timed"><span class="scene-kicker">TERRAVANTA · COOPERATIVE PAYOUT OPERATIONS</span><h1>Start with one completed, anonymized payout close.</h1><p class="scene-subtitle">Measure the current close and exception rework. Then see whether the reviewable workflow fits your team.</p></div>
+        <aside class="pilot-box timed"><span>A PRACTICAL FIRST PILOT</span><strong>One period. Your exports. Your reviewers.</strong><p>Use anonymized collection, processor and payout files. Keep the cooperative in control of every exception and sign-off.</p><div class="pilot-steps"><span><i>1</i>Compare today's process</span><span><i>2</i>Run one close in Terravanta</span><span><i>3</i>Review time and rework together</span></div></aside>
+        <span class="scene-foot">Terravanta · One verified farm. One connected record. Multiple agricultural and commercial applications.</span>
+      </section>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+      const scenes = [...document.querySelectorAll(".clip")];
+      scenes.forEach((scene, index) => {
+        const start = Number(scene.dataset.start);
+        const end = start + Number(scene.dataset.duration);
+        const items = scene.querySelectorAll(".timed");
+        tl.fromTo(items, { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.55, stagger: 0.08 }, start + 0.16);
+        if (index > 0) tl.fromTo(scene, { scale: 1.015 }, { scale: 1, duration: 0.48 }, start);
+      });
+      const sourceStart = Number(document.querySelector("#scene-source-files").dataset.start);
+      gsap.set(".source-tags span", { opacity: 0, y: 9 });
+      tl.to(".source-tags span", { opacity: 1, y: 0, duration: 0.32, stagger: 0.2 }, sourceStart + 2.5);
+      const reconcileStart = Number(document.querySelector("#scene-reconcile").dataset.start);
+      tl.to("#scene-reconcile .ledger-row", { opacity: 1, y: 0, duration: 0.35, stagger: 0.8 }, reconcileStart + 1.3);
+      const reviewStart = Number(document.querySelector("#scene-review").dataset.start);
+      tl.to("#scene-review .variance-row", { opacity: 1, x: 0, duration: 0.32, stagger: 0.72 }, reviewStart + 1.15);
+      const approveStart = Number(document.querySelector("#scene-approve").dataset.start);
+      tl.to("#scene-approve .approval-metric", { opacity: 1, x: 0, duration: 0.3, stagger: 0.65 }, approveStart + 1.45);
+      const pilotStart = Number(document.querySelector("#scene-pilot").dataset.start);
+      tl.fromTo(".pilot-steps span", { opacity: 0, x: -9 }, { opacity: 1, x: 0, duration: 0.28, stagger: 0.35 }, pilotStart + 3.0);
+      window.__timelines["terravanta-close"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
