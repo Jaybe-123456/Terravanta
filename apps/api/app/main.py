@@ -904,12 +904,18 @@ def settlement_close_detail(db: Session, close: SettlementClose) -> dict:
     items = db.query(SettlementCloseItem).filter_by(close_id=close.id).order_by(SettlementCloseItem.member_code).all()
     reconciled = sum(item.status == "reconciled" for item in items)
     pending = sum(item.review_status == "pending" for item in items)
+    unresolved = sum(item.status != "reconciled" and item.review_status != "accepted_with_note" for item in items)
+    issue_counts: dict[str, int] = {}
+    for item in items:
+        for issue in item.issues or []:
+            issue_counts[issue] = issue_counts.get(issue, 0) + 1
     return {
         "close": {
             "id": str(close.id), "organization_id": str(close.organization_id),
             "period_start": close.period_start.isoformat(), "period_end": close.period_end.isoformat(),
             "status": close.status, "member_count": len(items), "reconciled_count": reconciled,
             "exception_count": len(items) - reconciled, "pending_review_count": pending,
+            "unresolved_exception_count": unresolved, "issue_counts": issue_counts,
             "collection_filename": close.collection_filename, "processor_filename": close.processor_filename,
             "payout_filename": close.payout_filename, "collection_row_count": close.collection_row_count,
             "processor_row_count": close.processor_row_count, "payout_row_count": close.payout_row_count,

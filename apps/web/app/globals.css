@@ -260,3 +260,151 @@ a { color: inherit; }
   .reconciliation-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .reconciliation-summary > .status-pill { margin-left: 0; }
 }
+
+/* Cooperative settlement desk: operational hierarchy over generic farm dashboard cards. */
+.coop-dashboard { display: grid; gap: 16px; }
+.coop-hero { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(260px, .75fr); gap: 22px; align-items: stretch; padding: 27px; color: #f8fbf7; border: 1px solid #244d35; border-radius: 16px; background: radial-gradient(circle at 88% 18%, #547856 0, #365d40 30%, transparent 54%), linear-gradient(115deg, #1e432e 0%, #2d5739 66%, #3c6846 100%); box-shadow: 0 16px 40px #1e432e18; }
+.coop-hero-copy { align-self: center; max-width: 670px; }
+.coop-kicker { margin: 0 0 9px; color: #c4d7c3; font-size: 10px; font-weight: 760; letter-spacing: 1.3px; }
+.coop-hero h2 { max-width: 560px; margin: 0; color: #fff; font-size: clamp(26px, 3vw, 37px); font-weight: 650; letter-spacing: -1.2px; line-height: 1.06; }
+.coop-hero-copy > p:not(.coop-kicker) { max-width: 590px; margin: 12px 0 0; color: #d4e2d2; font-size: 13px; line-height: 1.65; }
+.coop-hero-actions { display: flex; flex-wrap: wrap; gap: 13px; align-items: center; margin-top: 20px; }
+.coop-primary-button { min-height: 42px; padding: 0 15px; color: #24472f; background: #f3f8ef; font-size: 12px; }
+.coop-primary-button:hover { background: #dfead9; }
+.coop-text-button, .coop-inline-link { border: 0; background: transparent; color: #416a48; display: inline-flex; align-items: center; gap: 7px; padding: 6px 0; font-size: 12px; font-weight: 680; }
+.coop-hero .coop-text-button { color: #e1eddf; }
+.coop-text-button:hover, .coop-inline-link:hover { text-decoration: underline; }
+.coop-latest-card { display: flex; flex-direction: column; justify-content: center; gap: 12px; padding: 17px; border: 1px solid #ffffff38; border-radius: 12px; background: #ffffff12; backdrop-filter: blur(4px); }
+.coop-latest-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; color: #d5e3d3; font-size: 11px; }
+.coop-latest-top .status-pill { background: #fff; }
+.coop-latest-card > strong { color: #fff; font-size: 19px; letter-spacing: -.3px; }
+.coop-latest-card > strong span { color: #c5d7c4; font-size: 12px; font-weight: 450; }
+.coop-latest-meta { display: flex; flex-wrap: wrap; gap: 8px 15px; color: #d4e2d2; font-size: 11px; }
+.coop-latest-card > p { margin: -5px 0 0; color: #d4e2d2; font-size: 12px; line-height: 1.5; }
+.coop-latest-card .coop-inline-link { width: fit-content; color: #fff; }
+.coop-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.coop-kpi { min-width: 0; padding: 16px 17px; border: 1px solid #e5ebe3; border-radius: 12px; background: #fff; box-shadow: 0 4px 14px #1d3c2606; }
+.coop-kpi > span { display: block; min-height: 34px; color: #59685d; font-size: 12px; font-weight: 620; }
+.coop-kpi > strong { display: block; margin-top: 2px; color: #1e432d; font-size: 29px; font-weight: 660; letter-spacing: -1px; }
+.coop-kpi > small { display: block; margin-top: 3px; color: #748076; font-size: 11px; line-height: 1.45; }
+.coop-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 14px; }
+.coop-dashboard .card, .coop-history-card, .coop-access-grid .card { padding: 20px; border-radius: 13px; }
+.coop-next-action { display: flex; flex-direction: column; align-items: flex-start; gap: 17px; justify-content: center; min-height: 215px; border-color: #dae6d8; background: linear-gradient(145deg, #fff 0%, #f8fbf6 100%); }
+.coop-next-action .panel-title h2, .coop-scope-card .panel-title h2, .coop-recent-card .panel-title h2, .coop-history-card .panel-title h2, .coop-access-grid .panel-title h2 { font-size: 17px; }
+.coop-next-action .panel-title .muted, .coop-scope-card .panel-title .muted, .coop-recent-card .panel-title .muted, .coop-history-card .panel-title .muted, .coop-access-grid .panel-title .muted { font-size: 12px; line-height: 1.6; }
+.coop-next-action .button { min-height: 40px; padding: 0 14px; font-size: 12px; }
+.coop-process { display: grid; gap: 11px; list-style: none; margin: 14px 0 0; padding: 0; }
+.coop-process li { display: flex; gap: 11px; align-items: center; }
+.coop-process li > span { width: 29px; height: 29px; display: grid; flex: 0 0 29px; place-items: center; color: #46734c; border-radius: 9px; background: #edf4eb; font-size: 10px; font-weight: 760; }
+.coop-process li > div { display: grid; gap: 3px; }
+.coop-process strong { color: #3c5041; font-size: 12px; }
+.coop-process small { color: #718074; font-size: 11px; line-height: 1.45; }
+.coop-boundary-note { display: flex; align-items: flex-start; gap: 8px; margin: 15px 0 0; padding-top: 12px; border-top: 1px solid #edf0eb; color: #647465; font-size: 11px; line-height: 1.5; }
+.coop-boundary-note svg { flex: 0 0 auto; color: #64825d; }
+.coop-section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.coop-period-list { display: grid; margin-top: 14px; }
+.coop-period-row { width: 100%; display: grid; grid-template-columns: 36px minmax(160px, 1fr) minmax(140px, .7fr) auto 18px; gap: 12px; align-items: center; padding: 13px 5px; border: 0; border-top: 1px solid #edf0ec; background: #fff; text-align: left; }
+.coop-period-row:hover { background: #f9fbf8; }
+.coop-period-icon { width: 34px; height: 34px; display: grid; place-items: center; color: #537451; border-radius: 9px; background: #edf4eb; }
+.coop-period-main, .coop-period-counts { min-width: 0; display: grid; gap: 4px; }
+.coop-period-main strong, .coop-period-counts strong { overflow: hidden; color: #33483a; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.coop-period-main strong span { color: #8b968e; font-weight: 450; }
+.coop-period-main small, .coop-period-counts small { color: #758178; font-size: 10px; line-height: 1.45; }
+.coop-period-counts { text-align: right; }
+.coop-period-row .status-pill { white-space: nowrap; }
+.coop-period-arrow { color: #9aa59c; }
+.coop-history-card .coop-period-row { grid-template-columns: 36px minmax(180px, 1fr) minmax(150px, .75fr) auto 18px; }
+.coop-access-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 14px; }
+.coop-access-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #edf0ec; }
+.coop-access-icon { width: 34px; height: 34px; display: grid; flex: 0 0 34px; place-items: center; color: #4e7353; border-radius: 9px; background: #eef4ec; }
+.coop-access-row > div { display: grid; gap: 4px; }
+.coop-access-row strong { color: #384c3e; font-size: 12px; }
+.coop-access-row small { color: #718074; font-size: 11px; line-height: 1.6; }
+.coop-control-list { display: grid; gap: 11px; padding-left: 18px; color: #657468; font-size: 11px; line-height: 1.55; }
+.coop-control-list li::marker { color: #6d8d67; }
+.settlement-workbench { gap: 18px; padding: 23px; border-radius: 14px; }
+.settlement-workbench .panel-title h2 { font-size: 22px; letter-spacing: -.5px; }
+.settlement-workbench .panel-title .eyebrow { font-size: 9px; }
+.settlement-workbench .panel-title .muted { max-width: 810px; font-size: 12px; line-height: 1.6; }
+.settlement-import { padding: 17px; border-radius: 12px; }
+.settlement-file { min-height: 145px; padding: 14px; border-radius: 10px; }
+.settlement-file strong { font-size: 12px; }
+.settlement-file small, .settlement-file .text-link { font-size: 10px; line-height: 1.5; }
+.settlement-file input { font-size: 10px; }
+.settlement-workbench .button { min-height: 38px; font-size: 11px; }
+.settlement-workbench .reconciliation-privacy strong { font-size: 11px; }
+.settlement-workbench .reconciliation-privacy small { font-size: 10px; }
+.settlement-workbench .run-chip strong { font-size: 10px; }
+.settlement-workbench .run-chip small, .settlement-workbench .run-counts b { font-size: 9px; }
+.settlement-workbench .reconciliation-summary span { font-size: 10px; }
+.settlement-workbench .reconciliation-summary strong { font-size: 16px; }
+.settlement-workbench .reconciliation-table th { font-size: 10px; }
+.settlement-workbench .reconciliation-table td { font-size: 11px; }
+.settlement-workbench .reconciliation-table .cell-sub { font-size: 9px; }
+.settlement-workbench .review-actions input { font-size: 10px; }
+.settlement-workbench .review-actions .button { min-height: 30px; font-size: 9px; }
+.settlement-workbench .settlement-approval strong { font-size: 12px; }
+.settlement-workbench .settlement-approval small { font-size: 10px; }
+.settlement-workbench .settlement-approve-controls input { font-size: 11px; }
+.coop-dashboard .empty { min-height: 90px; }
+.coop-pattern-card { display: grid; grid-template-columns: minmax(220px, .85fr) 1.15fr; align-items: center; gap: 13px 20px; padding: 17px 20px; border-radius: 12px; }
+.coop-pattern-card h2 { margin: 4px 0 5px; color: #344a39; font-size: 15px; letter-spacing: -.2px; }
+.coop-pattern-card > div:first-child > p:last-child { margin: 0; color: #718074; font-size: 11px; line-height: 1.5; }
+.coop-reason-list { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.coop-reason-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 33px; padding: 0 10px; color: #526354; border: 1px solid #e5ece3; border-radius: 8px; background: #f8faf7; font-size: 11px; }
+.coop-reason-chip strong { color: #315c3c; font-size: 12px; }
+.coop-pattern-empty { color: #718071; font-size: 11px; }
+.coop-pattern-note { grid-column: 1 / -1; padding-top: 10px; color: #748076; border-top: 1px solid #edf0eb; font-size: 10px; line-height: 1.55; }
+.vet-dashboard { display: grid; gap: 14px; }
+.vet-priority-strip { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid #dce7e9; border-radius: 11px; background: linear-gradient(110deg, #f2f7f7, #fff); }
+.vet-priority-icon { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; color: #4c737b; border-radius: 10px; background: #e7f0f1; }
+.vet-priority-strip > div { flex: 1; display: grid; gap: 4px; }
+.vet-priority-strip strong { color: #354f55; font-size: 12px; }
+.vet-priority-strip small { color: #75888b; font-size: 10px; line-height: 1.5; }
+.vet-priority-strip .button { min-height: 35px; font-size: 10px; }
+.vet-case-queue { padding: 19px; border-radius: 12px; }
+.vet-case-queue .panel-title h2 { font-size: 17px; }
+.vet-case-queue .panel-title .muted { font-size: 11px; line-height: 1.55; }
+.vet-case-queue table { min-width: 1040px; }
+.vet-case-queue td { font-size: 11px; vertical-align: top; }
+.vet-case-queue th { font-size: 10px; }
+.vet-case-queue .cell-sub { font-size: 9px; }
+.vet-case-queue .button { min-height: 32px; font-size: 10px; white-space: nowrap; }
+.vet-case-queue .provenance-banner { margin-top: 13px; }
+.resource-cycle-live .cycle-node-action { padding: 0 3px; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.resource-cycle-live .cycle-node-action:hover > span { color: #315c3c; background: #e4efe1; transform: translateY(-1px); }
+.resource-cycle-live .cycle-node-action:focus-visible { outline: 2px solid #477b53; outline-offset: 4px; border-radius: 7px; }
+.resource-cycle-note { display: block; margin-top: 7px; color: #89948b; font-size: 9px; line-height: 1.5; }
+
+@media (max-width: 1000px) {
+  .coop-hero { grid-template-columns: 1.1fr .9fr; padding: 22px; }
+  .coop-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .coop-period-row, .coop-history-card .coop-period-row { grid-template-columns: 34px minmax(140px, 1fr) minmax(120px, .7fr) auto; }
+  .coop-period-arrow { display: none; }
+}
+@media (max-width: 760px) {
+  .coop-hero, .coop-dashboard-grid, .coop-access-grid, .coop-pattern-card { grid-template-columns: 1fr; }
+  .coop-hero { gap: 18px; padding: 19px; }
+  .coop-latest-card { max-width: none; }
+  .coop-section-head { flex-direction: column; }
+  .vet-priority-strip { flex-wrap: wrap; }
+  .vet-priority-strip > div { flex-basis: calc(100% - 52px); }
+  .vet-priority-strip .button { margin-left: 48px; }
+  .coop-period-row, .coop-history-card .coop-period-row { grid-template-columns: 34px minmax(0, 1fr) auto; gap: 9px; }
+  .coop-period-counts { display: none; }
+}
+@media (max-width: 480px) {
+  .coop-kpis { gap: 8px; }
+  .coop-kpi { padding: 12px; }
+  .coop-kpi > span { font-size: 11px; }
+  .coop-kpi > strong { font-size: 24px; }
+  .coop-hero h2 { font-size: 27px; }
+  .coop-hero-actions { align-items: flex-start; flex-direction: column; }
+  .coop-dashboard .card, .coop-history-card, .coop-access-grid .card, .settlement-workbench { padding: 15px; }
+  .coop-period-row, .coop-history-card .coop-period-row { grid-template-columns: 30px minmax(0, 1fr) auto; padding: 11px 1px; }
+  .coop-period-icon { width: 30px; height: 30px; }
+  .coop-period-main strong { font-size: 10px; }
+  .coop-period-row .status-pill { font-size: 8px; padding: 4px 6px; }
+  .settlement-workbench .panel-title h2 { font-size: 19px; }
+  .vet-case-queue { padding: 14px; }
+}

@@ -41,6 +41,8 @@ Any missing source, volume difference, processor arithmetic difference, or payou
 
 After approval, the cooperative can download a member-code statement CSV with period quantities, processor gross/deductions/net, payout, variance and exception review notes. The export neutralizes spreadsheet formula-like text. The API logs source-file SHA-256 fingerprints, the acting user, review decisions, approval and statement-pack download. Uploaded file binaries are not retained. The normalized aggregate and row/reference provenance are retained in the database.
 
+The close desk reports the latest period's automatic match share and exception counts by deterministic reason, plus the median elapsed time between Terravanta import and recorded approval for completed closes. The duration is not total staff labor or a before/after savings estimate: it excludes export preparation, offline review and work in other systems. A paid pilot must separately baseline the cooperative's existing close time and exception rework before any efficiency claim is made.
+
 ## APIs
 
 All routes are `/api/v1` versioned and restricted server-side to a user assigned as the cooperative administrator for exactly one organization.

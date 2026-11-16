@@ -66,14 +66,23 @@ def test_close_review_approval_and_statement_pack_are_server_gated(client):
     close_id = result["close"]["id"]
     item = result["items"][0]
     assert result["close"]["exception_count"] == 1
+    assert result["close"]["unresolved_exception_count"] == 1
+    assert result["close"]["issue_counts"] == {"volume_variance": 1, "payout_variance": 1}
     assert client.get(f"/api/v1/cooperative/settlement-closes/{close_id}/statement-pack", headers=headers).status_code == 409
     blocked = client.post(f"/api/v1/cooperative/settlement-closes/{close_id}/approve", headers=headers, json={"note": "Review close"})
     assert blocked.status_code == 409
+    follow_up = client.post(
+        f"/api/v1/cooperative/settlement-closes/{close_id}/items/{item['id']}/review",
+        headers=headers, json={"decision": "follow_up", "note": "Need source voucher"},
+    )
+    assert follow_up.status_code == 200
+    assert follow_up.json()["close"]["unresolved_exception_count"] == 1
     reviewed = client.post(
         f"/api/v1/cooperative/settlement-closes/{close_id}/items/{item['id']}/review",
         headers=headers, json={"decision": "accept_with_note", "note": "Source variance reviewed"},
     )
     assert reviewed.status_code == 200
+    assert reviewed.json()["close"]["unresolved_exception_count"] == 0
     approved = client.post(f"/api/v1/cooperative/settlement-closes/{close_id}/approve", headers=headers, json={"note": "Finance close reviewed"})
     assert approved.status_code == 200
     assert approved.json()["close"]["status"] == "approved"
