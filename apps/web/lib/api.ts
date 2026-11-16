@@ -56,6 +56,16 @@ export async function loginAccessCode(name: string, email: string, code: string)
   };
 }
 
+export async function requestAccessCode(name: string, email: string): Promise<string> {
+  const response = await fetch(`${API_URL}/api/v1/auth/request-access-code`, {
+    method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.detail || "Could not send a verification code.");
+  return result.message || "If these details can be registered, a verification code has been emailed. It expires in 10 minutes.";
+}
+
 export async function signUpSupabase(name: string, email: string, password: string): Promise<Session | null> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Farmer registration is not configured for this deployment.");
   const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;

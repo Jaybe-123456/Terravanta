@@ -1,5 +1,6 @@
 import json
 import hashlib
+import hmac
 import logging
 import re
 import secrets
@@ -9,9 +10,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
+import httpx
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +30,7 @@ from .models import (
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, User, UserRole,
 )
 from .schemas import (
-    AccessCodeIssue, AccessCodeLogin, AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
+    AccessCodeLogin, AccessCodeRequest, AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
 )
@@ -38,6 +40,40 @@ from .seed import FARMER_ID, FARM_ID, seed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("terravanta")
+
+
+def email_code_hash(email: str, code: str) -> str:
+    message = f"email-otp\0{email}\0{code}".encode("utf-8")
+    return hmac.new(settings.demo_auth_secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+
+
+def send_access_code_email(email: str, name: str, code: str):
+    if not settings.resend_api_key or not settings.access_code_from_email:
+        raise HTTPException(503, "Email code delivery is not configured yet. Please try again later.")
+    text_body = (
+        f"Hello {name},\n\nYour Terravanta sign-in code is {code}. "
+        "It expires in 10 minutes and can be used once. If you did not request it, ignore this email."
+    )
+    try:
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"},
+            json={
+                "from": settings.access_code_from_email,
+                "to": [email],
+                "subject": "Your Terravanta sign-in code",
+                "text": text_body,
+            },
+            timeout=10,
+        )
+    except httpx.HTTPError as exc:
+        log.warning("Access code email delivery failed (%s)", type(exc).__name__)
+        raise HTTPException(503, "We could not send your code. Please try again later.") from exc
+    if not response.is_success:
+        log.warning("Access code email provider returned HTTP %s", response.status_code)
+        raise HTTPException(503, "We could not send your code. Please try again later.")
+
+
 def initialize_database():
     if settings.app_env == "production":
         # Production schema changes are applied by Alembic before the API starts.
@@ -134,52 +170,82 @@ def demo_login(role: str, db: Session = Depends(get_db)):
     return {"access_token": issue_demo_token(user, role), "token_type": "bearer", "user": {"id": str(user.id), "name": user.display_name, "role": role}, "synthetic": True}
 
 
-@app.post("/api/v1/auth/access-codes", status_code=201)
-def issue_access_code(
-    payload: AccessCodeIssue,
-    x_access_admin_key: str | None = Header(default=None),
-    db: Session = Depends(get_db),
-):
-    """Issue a farmer-only pilot code. The raw code is returned once; only its hash is stored."""
-    if not settings.temp_access_auth_enabled or not settings.temp_access_admin_secret:
-        raise HTTPException(404, "Temporary access-code enrollment is disabled")
-    if not x_access_admin_key or not secrets.compare_digest(x_access_admin_key, settings.temp_access_admin_secret):
-        raise HTTPException(401, "Administrator key is invalid")
-    existing = db.query(User).filter(func.lower(User.email) == payload.email).first()
-    if existing:
-        assigned = user_roles(db, existing)
-        if assigned and assigned != {"farmer"}:
-            raise HTTPException(409, "This email is assigned to a staff role; use the approved staff invitation process")
-        if existing.display_name.casefold() != payload.name.casefold():
-            raise HTTPException(409, "This email already has a different account name")
-    code = secrets.token_urlsafe(24)
+@app.post("/api/v1/auth/request-access-code", status_code=202)
+def request_access_code(payload: AccessCodeRequest, db: Session = Depends(get_db)):
+    """Email a short-lived one-time code; never return the code in the API response."""
+    if not settings.temp_access_auth_enabled:
+        raise HTTPException(404, "Temporary access-code sign-in is disabled")
+    if not settings.resend_api_key or not settings.access_code_from_email:
+        raise HTTPException(503, "Email code delivery is not configured yet. Please try again later.")
     now = datetime.now(timezone.utc)
-    for previous in db.query(AccessCode).filter_by(email=payload.email, revoked_at=None).all():
-        previous.revoked_at = now
-    record = AccessCode(
-        code_hash=hashlib.sha256(code.encode("utf-8")).hexdigest(),
-        email=payload.email, display_name=payload.name,
-        expires_at=now + timedelta(days=payload.expires_in_days),
-    )
-    db.add(record)
-    db.flush()
-    db.add(AuditLog(action="auth.access_code_issued", entity_type="access_code", entity_id=str(record.id), metadata_json={"email": payload.email, "expires_at": record.expires_at.isoformat()}))
-    db.commit()
-    return {"code": code, "name": payload.name, "email": payload.email, "expires_at": record.expires_at.isoformat(), "role": "farmer", "note": "Shown once. Share privately with the invited user."}
+    recent_count = db.query(AccessCode).filter(
+        AccessCode.email == payload.email,
+        AccessCode.code_type == "email_otp",
+        AccessCode.created_at >= now - timedelta(minutes=15),
+    ).count()
+    if recent_count >= 3:
+        raise HTTPException(429, "Too many codes requested for this email. Try again in 15 minutes.")
+    service_count = db.query(AccessCode).filter(
+        AccessCode.code_type == "email_otp",
+        AccessCode.created_at >= now - timedelta(hours=1),
+    ).count()
+    if service_count >= 100:
+        raise HTTPException(429, "Sign-in code requests are temporarily busy. Try again later.")
+
+    user = db.query(User).filter(func.lower(User.email) == payload.email).first()
+    eligible = True
+    if user:
+        roles = user_roles(db, user)
+        eligible = (not roles or roles == {"farmer"}) and user.display_name.casefold() == payload.name.casefold()
+    if eligible:
+        code = f"{secrets.randbelow(100_000_000):08d}"
+        for previous in db.query(AccessCode).filter_by(email=payload.email, code_type="email_otp", revoked_at=None).all():
+            previous.revoked_at = now
+        record = AccessCode(
+            code_hash=email_code_hash(payload.email, code), email=payload.email,
+            display_name=payload.name, code_type="email_otp",
+            expires_at=now + timedelta(minutes=10), attempt_count=0,
+        )
+        db.add(record)
+        db.commit()
+        try:
+            send_access_code_email(payload.email, payload.name, code)
+        except HTTPException:
+            record.revoked_at = datetime.now(timezone.utc)
+            db.commit()
+            raise
+    return {"message": "If these details can be registered, a verification code has been sent to that email. It expires in 10 minutes."}
 
 
 @app.post("/api/v1/auth/access-code-login")
 def access_code_login(payload: AccessCodeLogin, db: Session = Depends(get_db)):
     if not settings.temp_access_auth_enabled:
         raise HTTPException(404, "Temporary access-code sign-in is disabled")
-    code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
-    record = db.query(AccessCode).filter_by(code_hash=code_hash, email=payload.email).first()
     now = datetime.now(timezone.utc)
-    expires_at = record.expires_at if record else None
-    if expires_at and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if not record or record.revoked_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold():
-        raise HTTPException(401, "Name, email, or access code is invalid or expired")
+    record = None
+    if len(payload.code) == 8 and payload.code.isdigit():
+        record = db.query(AccessCode).filter_by(email=payload.email, code_type="email_otp", revoked_at=None).order_by(AccessCode.created_at.desc()).first()
+        expires_at = record.expires_at if record else None
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        valid_code = bool(record and hmac.compare_digest(record.code_hash, email_code_hash(payload.email, payload.code)))
+        if not record or not expires_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold() or not valid_code:
+            if record:
+                record.attempt_count += 1
+                if record.attempt_count >= 5 or expires_at <= now:
+                    record.revoked_at = now
+                db.commit()
+            raise HTTPException(401, "Name, email, or verification code is invalid or expired")
+        record.revoked_at = now  # Email verification codes are single-use.
+    else:
+        code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
+        record = db.query(AccessCode).filter_by(code_hash=code_hash, email=payload.email, code_type="invite").first()
+        expires_at = record.expires_at if record else None
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if not record or record.revoked_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold():
+            raise HTTPException(401, "Name, email, or verification code is invalid or expired")
+
     user = db.query(User).filter(func.lower(User.email) == payload.email).first()
     created = False
     if user is None:

@@ -32,14 +32,16 @@ class UserRole(Base):
 
 
 class AccessCode(Base):
-    """Individually issued temporary pilot credentials; only hashes are stored."""
+    """Hashed one-time email codes and legacy pilot invitations."""
     __tablename__ = "access_codes"
     id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     display_name: Mapped[str] = mapped_column(String(120))
+    code_type: Mapped[str] = mapped_column(String(20), default="invite", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 

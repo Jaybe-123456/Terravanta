@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     supabase_jwks_url: str = ""
     supabase_anon_key: str = ""
     temp_access_auth_enabled: bool = False
-    temp_access_admin_secret: str = ""
+    resend_api_key: str = ""
+    access_code_from_email: str = ""
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_chat_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
@@ -56,8 +57,6 @@ class Settings(BaseSettings):
             has_supabase = bool(self.supabase_url and self.supabase_anon_key)
             if not has_supabase and not self.temp_access_auth_enabled:
                 raise ValueError("Production requires Supabase Auth or explicitly enabled temporary access-code auth")
-            if self.temp_access_auth_enabled and len(self.temp_access_admin_secret) < 32:
-                raise ValueError("Temporary access-code auth requires TEMP_ACCESS_ADMIN_SECRET of at least 32 characters")
             if "*" in self.allowed_origins:
                 raise ValueError("Production CORS_ORIGINS must list explicit origins")
             if self.enable_synthetic_data:

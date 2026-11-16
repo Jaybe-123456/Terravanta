@@ -15,7 +15,7 @@ Do not choose Render's free Postgres for real farmer data: Render says free data
 1. Push `render.yaml` to the `main` branch of `Jaybe-123456/Terravanta`.
 2. In Render, choose **New → Blueprint** and connect that GitHub repository. Select `main` and let Render read `render.yaml`.
 3. Before confirming, verify the resources shown are `terravanta-api` and `terravanta-db`, both in Singapore, and review the monthly charges.
-4. Render will ask for the Blueprint's unsynced values. Set `CORS_ORIGINS` to your exact production Vercel origin. For Supabase Auth, also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the dedicated Terravanta project values (never a service-role key). The Blueprint enables the temporary farmer access-code mode and generates its administrator secret.
+4. Render will ask for the Blueprint's unsynced values. Set `CORS_ORIGINS` to your exact production Vercel origin. For Supabase Auth, also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the dedicated Terravanta project values (never a service-role key). For email code sign-in, set the Resend variables described below.
 5. Confirm creation. The API container's startup runs `alembic upgrade head`; the first migration enables PostGIS and creates the schema. `autoDeployTrigger: checksPass` means later commits deploy after GitHub checks pass.
 
 ## Get and verify the public API URL
@@ -48,20 +48,11 @@ For Vercel Preview deployments, add their exact origin to Render's comma-separat
 
 ## Temporary access-code pilot
 
-If Supabase email confirmation is blocking a controlled pilot, the API supports individual farmer access codes. This is passwordless pilot authentication, not email ownership verification. Codes are tied to a name and email, stored as hashes, expire, and only grant the farmer role. Do not use it for veterinarian or cooperative accounts or distribute a code publicly.
+The access-code screen lets a user enter their name and email and request a sign-in code. The API sends an eight-digit one-time code to that address, stores only a keyed hash, allows up to five attempts, expires it after 10 minutes, and consumes it after successful verification. Verified emails can create farmer accounts; staff roles are not granted through this flow. The code is delivered by email and is never displayed in the browser or returned by the API.
 
-On Render, set `TEMP_ACCESS_AUTH_ENABLED=true` and set `TEMP_ACCESS_ADMIN_SECRET` to a unique random secret of at least 32 characters. Keep the existing `DEMO_AUTH_SECRET` unique and private; it signs temporary API sessions. On Vercel, set `NEXT_PUBLIC_AUTH_MODE=access_code`, keep `NEXT_PUBLIC_API_URL` pointed at the Render API, and redeploy Production. Supabase variables may remain configured but are not used by the access-code screen.
+On Render, set `TEMP_ACCESS_AUTH_ENABLED=true`, `RESEND_API_KEY` to a Resend sending-only API key, and `ACCESS_CODE_FROM_EMAIL` to a sender address on a domain verified in Resend (for example, `Terravanta <signin@your-verified-domain>`). Render free web services block outbound SMTP, so this integration sends through Resend's HTTPS API. Keep the existing `DEMO_AUTH_SECRET` unique and private; it signs temporary API sessions. On Vercel, set `NEXT_PUBLIC_AUTH_MODE=access_code`, keep `NEXT_PUBLIC_API_URL` pointed at the Render API, and redeploy Production. Supabase variables may remain configured but are not used by this access-code screen. Add Resend's required DNS records in your domain provider before requesting codes.
 
-Issue a code with PowerShell from a trusted machine. Replace the API origin, name, email, and admin secret. The raw code is returned once; send it privately to that named user. The code remains valid for the selected period (14 days by default, up to 90 days) and each session lasts 12 hours.
-
-```powershell
-$api = "https://YOUR-API.onrender.com"
-$adminSecret = Read-Host "Render TEMP_ACCESS_ADMIN_SECRET"
-$payload = @{ name = "Farmer Name"; email = "farmer@example.com"; expires_in_days = 14 } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "$api/api/v1/auth/access-codes" -Headers @{ "X-Access-Admin-Key" = $adminSecret } -ContentType "application/json" -Body $payload
-```
-
-Remove or rotate `TEMP_ACCESS_ADMIN_SECRET` and set `TEMP_ACCESS_AUTH_ENABLED=false` when the pilot ends. Vercel Deployment Protection is a separate front-door setting; app access codes cannot bypass it. Ensure the public Production domain is not protected by Vercel Auth if farmers should open it without a Vercel account.
+Users request codes directly in the sign-in form; no administrator PowerShell command is needed. The API limits each email to three requests per 15 minutes and all code requests to 100 per hour. Email verification confirms control of the address but does not itself establish a real-world identity. Vercel Deployment Protection is a separate front-door setting; app access codes cannot bypass it. Ensure the public Production domain is not protected by Vercel Auth if farmers should open it without a Vercel account.
 
 ## Operational limits before a real farm pilot
 

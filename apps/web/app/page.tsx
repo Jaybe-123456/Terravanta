@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Check, ChevronDown, CircleHelp, CloudOff, Download, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
-import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
+import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, requestAccessCode as requestEmailCode, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
 type AnyRecord = Record<string, any>;
@@ -17,8 +17,8 @@ function dateInput(daysAgo = 0) {
   return date.toISOString().slice(0, 10);
 }
 
-function Field({ label, name, type = "text", required = true, placeholder = "", min, max, step, minLength, defaultValue, autoComplete }: { label: string; name: string; type?: string; required?: boolean; placeholder?: string; min?: string; max?: string; step?: string; minLength?: number; defaultValue?: string; autoComplete?: string }) {
-  return <label className="field"><span>{label}</span><input name={name} type={type} required={required} placeholder={placeholder} min={min} max={max} step={step} minLength={minLength} defaultValue={defaultValue} autoComplete={autoComplete} /></label>;
+function Field({ label, name, type = "text", required = true, placeholder = "", min, max, step, minLength, maxLength, defaultValue, autoComplete }: { label: string; name: string; type?: string; required?: boolean; placeholder?: string; min?: string; max?: string; step?: string; minLength?: number; maxLength?: number; defaultValue?: string; autoComplete?: string }) {
+  return <label className="field"><span>{label}</span><input name={name} type={type} required={required} placeholder={placeholder} min={min} max={max} step={step} minLength={minLength} maxLength={maxLength} defaultValue={defaultValue} autoComplete={autoComplete} /></label>;
 }
 
 function SelectField({ label, name, options, required = true }: { label: string; name: string; options: Array<{ label: string; value: string }>; required?: boolean }) {
@@ -206,6 +206,17 @@ export default function Home() {
     } finally { setAuthBusy(false); }
   }
 
+  async function requestSignInCode(name: string, email: string) {
+    setAuthBusy(true); setAuthError(""); setAuthMessage("");
+    try {
+      setAuthMessage(await requestEmailCode(name, email));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not send a verification code.";
+      setAuthError(message);
+      throw error;
+    } finally { setAuthBusy(false); }
+  }
+
   async function registerFarmer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -354,7 +365,7 @@ export default function Home() {
   const farmLabel = farm?.name || "Farm workspace";
 
   if (loading && !token) return <main className="boot-screen"><span className="boot-mark"><Leaf size={25} /></span><LoaderCircle className="spinner" size={20} /><p>Opening Terravanta workspace…</p></main>;
-  if (!token) return <SignInScreen demoMode={demoMode} accessCodeMode={accessCodeMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onDemo={switchRole} />;
+  if (!token) return <SignInScreen demoMode={demoMode} accessCodeMode={accessCodeMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRequestCode={requestSignInCode} onRegister={registerFarmer} onDemo={switchRole} />;
 
   return <div className="app-shell">
     <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Cooperative portal" : farmLabel} location={`${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
@@ -385,19 +396,38 @@ export default function Home() {
   </div>;
 }
 
-function SignInScreen({ demoMode, accessCodeMode, busy, error, message, onSubmit, onRegister, onDemo }: { demoMode: boolean; accessCodeMode: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onDemo: (role: string) => void }) {
+function SignInScreen({ demoMode, accessCodeMode, busy, error, message, onSubmit, onRequestCode, onRegister, onDemo }: { demoMode: boolean; accessCodeMode: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRequestCode: (name: string, email: string) => Promise<void>; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onDemo: (role: string) => void }) {
   const [registering, setRegistering] = useState(false);
-  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{demoMode ? "Open the farm workspace" : accessCodeMode ? "Use your pilot access code" : registering ? "Create a farmer account" : "Sign in to Terravanta"}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
+  const [codeSentTo, setCodeSentTo] = useState<{ name: string; email: string } | null>(null);
+  async function requestCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const name = String(values.get("name") || "").trim();
+    const email = String(values.get("email") || "").trim();
+    try { await onRequestCode(name, email); setCodeSentTo({ name, email }); } catch { /* the parent displays the delivery error */ }
+  }
+  async function resendCode() {
+    if (!codeSentTo) return;
+    try { await onRequestCode(codeSentTo.name, codeSentTo.email); } catch { /* the parent displays the delivery error */ }
+  }
+  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{demoMode ? "Open the farm workspace" : accessCodeMode ? codeSentTo ? "Enter your email code" : "Get a sign-in code" : registering ? "Create a farmer account" : "Sign in to Terravanta"}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
     {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : accessCodeMode ? <>
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
-      {message ? <div className="auth-info" role="status">{message}</div> : null}
-      <form className="auth-form" onSubmit={onSubmit}>
+      {!codeSentTo ? <form className="auth-form" onSubmit={requestCode}>
         <Field label="Full name" name="name" autoComplete="name" minLength={2} />
         <Field label="Email address" name="email" type="email" autoComplete="email" />
-        <Field label="Terravanta access code" name="access_code" autoComplete="one-time-code" minLength={20} />
-        <button className="button button-primary" disabled={busy}>{busy ? "Opening your workspace…" : "Continue securely"}</button>
-      </form>
-      <small className="auth-footnote">Pilot access codes are issued individually by Terravanta and tied to the invited name and email. Ask the person who invited you for your code.</small>
+        <button className="button button-primary" disabled={busy}>{busy ? "Sending your code…" : "Generate access code"}</button>
+      </form> : <>
+        <p className="auth-info" role="status">{message || `If these details can be registered, a code has been sent to ${codeSentTo.email}. It expires in 10 minutes.`}</p>
+        <form className="auth-form" onSubmit={onSubmit}>
+          <input type="hidden" name="name" value={codeSentTo.name} />
+          <input type="hidden" name="email" value={codeSentTo.email} />
+          <Field label="8-digit email code" name="access_code" autoComplete="one-time-code" minLength={8} maxLength={8} />
+          <button className="button button-primary" disabled={busy}>{busy ? "Verifying code…" : "Verify and continue"}</button>
+        </form>
+        <div className="auth-code-actions"><button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => void resendCode()}>Resend code</button><button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => { setCodeSentTo(null); }}>Change name or email</button></div>
+      </>}
+      <small className="auth-footnote">We email an 8-digit one-time code to verify the address. It expires after 10 minutes and can be used once.</small>
     </> : <>
       {!SUPABASE_CONFIGURED ? <div className="auth-error" role="alert">Supabase Auth is not configured. Add your project URL and publishable anon key to `.env`, then rebuild the web service.</div> : null}
       {error ? <div className="auth-error" role="alert">{error}</div> : null}

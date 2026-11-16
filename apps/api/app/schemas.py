@@ -24,10 +24,9 @@ class FarmCreate(BaseModel):
         return self
 
 
-class AccessCodeIssue(BaseModel):
+class AccessCodeRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: str = Field(min_length=5, max_length=255)
-    expires_in_days: int = Field(default=14, ge=1, le=90)
 
     @model_validator(mode="after")
     def validate_email(self):
@@ -43,7 +42,7 @@ class AccessCodeIssue(BaseModel):
 class AccessCodeLogin(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: str = Field(min_length=5, max_length=255)
-    code: str = Field(min_length=20, max_length=100)
+    code: str = Field(min_length=8, max_length=100)
 
     @model_validator(mode="after")
     def normalize_identity(self):
@@ -54,6 +53,8 @@ class AccessCodeLogin(BaseModel):
             raise ValueError("Name must contain at least two characters")
         if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", self.email):
             raise ValueError("Enter a valid email address")
+        if len(self.code) == 8 and not self.code.isdigit():
+            raise ValueError("The email verification code must contain 8 digits")
         return self
 
 
