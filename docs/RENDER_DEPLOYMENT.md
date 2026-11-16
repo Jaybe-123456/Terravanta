@@ -5,7 +5,7 @@ This Blueprint deploys the FastAPI container, a private managed PostgreSQL datab
 ## Before creating the services
 
 1. Choose Supabase Auth for email/password accounts or use the temporary access-code pilot below. If using Supabase, create a **dedicated Terravanta Supabase project**; do not use VetIOS credentials. Add the production Vercel URL to its allowed redirect URLs.
-2. Identify the production Vercel origin, such as `https://terravanta.vercel.app`. The API CORS value must be the exact origin including `https://` and with no trailing slash. You can enter multiple exact origins separated by commas.
+2. The current production Vercel origin is `https://terravanta-five.vercel.app`. The API includes this exact origin through `PUBLIC_APP_ORIGIN`; `CORS_ORIGINS` remains available for other explicitly trusted origins. Do not allow all `*.vercel.app` previews to reach production farm data.
 3. Review the Render plan selection and billing screen before confirming creation. The checked-in Blueprint selects a continuously running API service (0.5 CPU / 512 MB), a paid Postgres instance (0.5 CPU / 1 GB), and 1 GB persistent file storage. Render's current published prices put these at about **$7/month + $19/month + $0.25/month**, or roughly **$26.25/month**, before bandwidth, taxes, workspace fees, or future scaling. Confirm current prices in your account before provisioning.
 
 Do not choose Render's free Postgres for real farmer data: Render says free databases expire after 30 days, have a 1 GB limit, and have no backups. The paid Postgres plan provides managed backups/PITR. The API's 1 GB disk keeps uploaded source documents across restarts; it is only attached to this one API instance and does not replace an object-storage/backup plan.
@@ -15,7 +15,7 @@ Do not choose Render's free Postgres for real farmer data: Render says free data
 1. Push `render.yaml` to the `main` branch of `Jaybe-123456/Terravanta`.
 2. In Render, choose **New → Blueprint** and connect that GitHub repository. Select `main` and let Render read `render.yaml`.
 3. Before confirming, verify the resources shown are `terravanta-api` and `terravanta-db`, both in Singapore, and review the monthly charges.
-4. Render will ask for the Blueprint's unsynced values. Set `CORS_ORIGINS` to your exact production Vercel origin. For Supabase Auth, also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the dedicated Terravanta project values (never a service-role key). For email code sign-in, set the Resend variables described below.
+4. Render will ask for the Blueprint's unsynced values. `PUBLIC_APP_ORIGIN` is set to `https://terravanta-five.vercel.app`; add any additional trusted origin to `CORS_ORIGINS` as a comma-separated exact origin. For Supabase Auth, also set `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the dedicated Terravanta project values (never a service-role key). For email code sign-in, set the Resend variables described below.
 5. Confirm creation. The API container's startup runs `alembic upgrade head`; the first migration enables PostGIS and creates the schema. `autoDeployTrigger: checksPass` means later commits deploy after GitHub checks pass.
 
 ## Get and verify the public API URL
@@ -42,9 +42,9 @@ In the Vercel project for Terravanta, add these Production environment variables
 | `NEXT_PUBLIC_SUPABASE_URL` | Required only for `supabase` mode |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Required only for `supabase` mode |
 
-Save the variables and redeploy the Production deployment because `NEXT_PUBLIC_API_URL` is compiled into the frontend build. Add the Vercel production URL to Supabase's redirect allowlist. After the Vercel URL is stable, keep `CORS_ORIGINS` on Render set to that exact origin and redeploy the API if you change it.
+Save the variables and redeploy the Production deployment because `NEXT_PUBLIC_API_URL` is compiled into the frontend build. Add the Vercel production URL to Supabase's redirect allowlist. The API permits the exact origin in `PUBLIC_APP_ORIGIN`; redeploy the API if you change it.
 
-For Vercel Preview deployments, add their exact origin to Render's comma-separated `CORS_ORIGINS` only if you intentionally want previews to access the same real database. Keep preview access off by default to avoid mixing development builds with production farm records.
+For Vercel Preview deployments, add their exact origin to Render's comma-separated `CORS_ORIGINS` only if you intentionally want previews to access the same real database. Keep preview access off by default to avoid mixing development builds with production farm records. If the stable production Vercel domain changes, update `PUBLIC_APP_ORIGIN` in Render and redeploy the API.
 
 ## Temporary access-code pilot
 

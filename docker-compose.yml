@@ -21,6 +21,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+psycopg://terravanta:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/terravanta
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      PUBLIC_APP_ORIGIN: ${PUBLIC_APP_ORIGIN:-https://terravanta-five.vercel.app}
       DEMO_AUTH_SECRET: ${DEMO_AUTH_SECRET:?Set DEMO_AUTH_SECRET in .env}
       ENABLE_SYNTHETIC_DATA: ${ENABLE_SYNTHETIC_DATA:-false}
       SUPABASE_URL: ${SUPABASE_URL:-}

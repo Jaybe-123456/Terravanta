@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "sqlite:///./terrava.db"
     cors_origins: str = "http://localhost:3000"
+    # Stable public Vercel production URL. Keep preview deployments out of this allowlist.
+    public_app_origin: str = "https://terravanta-five.vercel.app"
     demo_auth_secret: str = "local-demo-only-change-me"
     enable_synthetic_data: bool = False
     supabase_url: str = ""
@@ -39,7 +41,10 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+        configured = [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+        if self.public_app_origin.strip():
+            configured.append(self.public_app_origin.strip().rstrip("/"))
+        return list(dict.fromkeys(configured))
 
     @property
     def effective_supabase_jwks_url(self) -> str:
