@@ -163,6 +163,16 @@ export default function Home() {
         let session = !demoMode ? await consumeSupabaseRedirect() : null;
         session = session || await restoreSession();
         if (session?.access_token) {
+          // Access-code login already returned this user's server-verified identity.
+          // Do not make the profile endpoint a startup dependency: the API applies
+          // authorization to every workspace request that follows.
+          if (accessCodeMode) {
+            if (cancelled) return;
+            setCurrentUserName(session.user.name);
+            setRole(session.user.role);
+            setToken(session.access_token);
+            return;
+          }
           const profile = await api<AnyRecord>("/api/v1/me", session.access_token);
           if (cancelled) return;
           session.user = { id: profile.id, name: profile.name, email: profile.email, role: profile.role };
@@ -184,7 +194,7 @@ export default function Home() {
     };
     void start();
     return () => { cancelled = true; };
-  }, [demoMode]);
+  }, [accessCodeMode, demoMode]);
 
   useEffect(() => { if (token) void loadWorkspace(token, role); }, [token, role, loadWorkspace]);
 
