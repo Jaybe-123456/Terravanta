@@ -570,9 +570,22 @@ function sectionDescription(section: Section, farmName?: string, coop = false, r
 }
 
 function Overview({ dashboard, alerts, resourceCycle, loading, error, onRetry, onNavigate }: { dashboard: AnyRecord | null; alerts: AnyRecord[]; resourceCycle: AnyRecord | null; loading: boolean; error: string; onRetry: () => Promise<void>; onNavigate: (section: Section) => void }) {
-  if (!dashboard && loading) return <Empty title="Loading farm records" detail="Terravanta is fetching this farm’s records from the API." />;
-  if (!dashboard && error) return <section className="card overview-load-state"><Empty title="Overview could not load" detail={error} /><button type="button" className="button button-outline" onClick={() => void onRetry()}><RefreshCw size={14} />Retry loading records</button></section>;
-  if (!dashboard) return <section className="card overview-load-state"><Empty title="No farm record yet" detail="Register your farm to connect livestock, crops, veterinary records and production." /><button type="button" className="button button-primary" onClick={() => onNavigate("farms")}>Register a farm <ArrowRight size={14} /></button></section>;
+  if (!dashboard) {
+    const title = loading ? "Loading farm records" : error ? "Overview could not load" : "No farm record yet";
+    const detail = loading
+      ? "Terravanta is fetching this farm’s records from the API."
+      : error
+        ? error
+        : "Register your farm to connect livestock, crops, veterinary records and production.";
+    return <div className="overview-empty-layout">
+      <section className="card overview-load-state">
+        <Empty title={title} detail={detail} />
+        {error && !loading ? <button type="button" className="button button-outline" onClick={() => void onRetry()}><RefreshCw size={14} />Retry loading records</button> : null}
+        {!loading && !error ? <button type="button" className="button button-primary" onClick={() => onNavigate("farms")}>Register a farm <ArrowRight size={14} /></button> : null}
+      </section>
+      <TerravantaVideoFeature />
+    </div>;
+  }
   const stats = dashboard.stats;
   const cards = [
     { title: "Registered animals", value: stats.animals, unit: "head", icon: "🐄", sub: "Across the active herd", tone: "green" },
