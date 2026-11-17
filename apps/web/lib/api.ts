@@ -182,15 +182,27 @@ export async function logoutSupabase(token: string): Promise<void> {
 }
 
 export async function api<T = any>(path: string, token: string, init: RequestInit = {}): Promise<T> {
-  const request = (accessToken: string) => fetch(`${API_URL}${path}`, { ...init, cache: "no-store", headers: { Authorization: `Bearer ${accessToken}`, ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...init.headers } });
-  let response = await request(currentAccessToken || token);
+  const request = (accessToken: string) => fetch(`${API_URL}${path}`, { ...init, cache: "no-store", signal: init.signal || AbortSignal.timeout(20000), headers: { Authorization: `Bearer ${accessToken}`, ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }), ...init.headers } });
+  let response: Response;
+  try {
+    response = await request(currentAccessToken || token);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Network request failed";
+    throw new Error(`Could not reach the Terravanta API for ${path}. ${detail}`);
+  }
   if (response.status === 401 && AUTH_MODE === "supabase") {
     const refreshedToken = await refreshSession();
-    if (refreshedToken) response = await request(refreshedToken);
+    if (refreshedToken) {
+      try { response = await request(refreshedToken); }
+      catch (error) {
+        const detail = error instanceof Error ? error.message : "Network request failed";
+        throw new Error(`Could not reach the Terravanta API for ${path}. ${detail}`);
+      }
+    }
   }
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(error.detail || "Request failed");
+    throw new Error(`${error.detail || "Request failed"} (HTTP ${response.status} · ${path})`);
   }
   return response.json();
 }

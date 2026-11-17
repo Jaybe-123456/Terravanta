@@ -63,6 +63,13 @@ a { color: inherit; }
 .synthetic-badge > span { background: #b5a947; }
 .date-chip { color: #828c84; font-size: 10px; background: #fff; border: 1px solid #e9ede8; border-radius: 7px; padding: 7px 9px; }
 .loading-strip { margin: -8px 0 12px; color: #7e8a81; display: flex; gap: 8px; align-items: center; font-size: 11px; }
+.workspace-load-error { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #efd6d2; border-radius: 9px; color: #98463d; background: #fff8f6; }
+.workspace-load-error strong { display: block; font-size: 11px; }
+.workspace-load-error p { margin: 4px 0 0; overflow-wrap: anywhere; color: #86534d; font-size: 10px; line-height: 1.5; }
+.workspace-load-error .button { flex: 0 0 auto; }
+.overview-load-state { display: grid; justify-items: center; gap: 4px; max-width: 620px; min-height: 220px; margin: 0 auto; }
+.overview-load-state .empty { min-height: 120px; }
+.overview-load-state .empty p { max-width: 470px; overflow-wrap: anywhere; }
 .welcome-banner { height: 184px; background: linear-gradient(102deg, #244e34 0%, #315e3e 60%, #386542 100%); border-radius: 12px; color: #fff; overflow: hidden; position: relative; display: flex; align-items: center; padding: 22px 26px; box-shadow: 0 4px 14px #163d2514; }
 .welcome-copy { position: relative; z-index: 2; }
 .banner-label { letter-spacing: 1.05px; font-size: 8px; color: #c5d8c2; font-weight: 700; }

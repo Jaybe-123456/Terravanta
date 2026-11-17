@@ -71,6 +71,7 @@ export default function Home() {
   const [documentResult, setDocumentResult] = useState<AnyRecord | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const [loading, setLoading] = useState(true);
+  const [workspaceError, setWorkspaceError] = useState("");
   const [saving, setSaving] = useState(false);
   const [online, setOnline] = useState(true);
   const [queued, setQueued] = useState(0);
@@ -95,6 +96,7 @@ export default function Home() {
 
   const loadWorkspace = useCallback(async (accessToken: string, currentRole: string) => {
     setLoading(true);
+    setWorkspaceError("");
     try {
       if (currentRole === "cooperative_admin") {
         const [shared, runs, closes] = await Promise.all([
@@ -118,8 +120,10 @@ export default function Home() {
       }
       setFarm(primary);
       setFarmId(primary.id);
-      const [overview, nextAnimals, nextPlots, nextFeed, nextProduction, nextDeliveries, nextCycle, nextAlerts, nextPassport, nextVetQueue, nextCooperatives] = await Promise.all([
-        api<AnyRecord>("/api/v1/dashboard", accessToken),
+      const overview = await api<AnyRecord>("/api/v1/dashboard", accessToken);
+      setDashboard(overview);
+      setFarm(overview.farm);
+      const secondaryResults = await Promise.allSettled([
         api<AnyRecord[]>(`/api/v1/farms/${primary.id}/animals`, accessToken),
         api<AnyRecord[]>(`/api/v1/farms/${primary.id}/plots`, accessToken),
         api<AnyRecord[]>(`/api/v1/farms/${primary.id}/feed-batches`, accessToken),
@@ -131,13 +135,22 @@ export default function Home() {
         currentRole === "veterinarian" ? api<AnyRecord[]>("/api/v1/veterinary/queue", accessToken) : Promise.resolve([]),
         currentRole === "farmer" ? api<AnyRecord[]>("/api/v1/cooperatives", accessToken) : Promise.resolve([]),
       ]);
-      setDashboard(overview); setAnimals(nextAnimals); setPlots(nextPlots); setFeedBatches(nextFeed); setProduction(nextProduction); setDeliveries(nextDeliveries); setResourceCycle(nextCycle); setAlerts(nextAlerts); setPassport(nextPassport);
-      setVetQueue(nextVetQueue);
-      setCooperatives(nextCooperatives);
-      setFarm(overview.farm);
+      const value = <T,>(index: number, fallback: T): T => {
+        const result = secondaryResults[index];
+        return result.status === "fulfilled" ? result.value as T : fallback;
+      };
+      setAnimals(value(0, [])); setPlots(value(1, [])); setFeedBatches(value(2, []));
+      setProduction(value(3, [])); setDeliveries(value(4, [])); setResourceCycle(value(5, null));
+      setAlerts(value(6, [])); setPassport(value(7, null)); setVetQueue(value(8, [])); setCooperatives(value(9, []));
+      const failures = secondaryResults.flatMap((result) => result.status === "rejected"
+        ? [result.reason instanceof Error ? result.reason.message : "A supporting farm-record request failed"]
+        : []);
+      if (failures.length) setWorkspaceError(`Overview loaded, but some supporting records did not load: ${failures.join(" · ")}`);
       await refreshQueue();
     } catch (error) {
-      setToast({ text: error instanceof Error ? error.message : "Could not load the workspace", error: true });
+      const message = error instanceof Error ? error.message : "Could not load the workspace";
+      setWorkspaceError(message);
+      setToast({ text: message, error: true });
     } finally {
       setLoading(false);
     }
@@ -176,11 +189,13 @@ export default function Home() {
   useEffect(() => { if (token) void loadWorkspace(token, role); }, [token, role, loadWorkspace]);
 
   useEffect(() => {
-    const updateOnline = () => { const connected = navigator.onLine; setOnline(connected); if (connected && token) void refreshQueue().then(() => loadWorkspace(token, role)); };
+    const updateOnline = () => { setOnline(navigator.onLine); };
+    const syncWhenOnline = () => { setOnline(true); if (token) void refreshQueue().then(() => loadWorkspace(token, role)); };
+    const updateOffline = () => setOnline(false);
     const updateQueue = () => { void import("@/lib/offline-queue").then(({ queueOwnerId, readQueue }) => readQueue(queueOwnerId()).then((items) => setQueued(items.length))); };
     updateOnline(); updateQueue();
-    window.addEventListener("online", updateOnline); window.addEventListener("offline", updateOnline); window.addEventListener("terravanta-queue-change", updateQueue);
-    return () => { window.removeEventListener("online", updateOnline); window.removeEventListener("offline", updateOnline); window.removeEventListener("terravanta-queue-change", updateQueue); };
+    window.addEventListener("online", syncWhenOnline); window.addEventListener("offline", updateOffline); window.addEventListener("terravanta-queue-change", updateQueue);
+    return () => { window.removeEventListener("online", syncWhenOnline); window.removeEventListener("offline", updateOffline); window.removeEventListener("terravanta-queue-change", updateQueue); };
   }, [refreshQueue, loadWorkspace, token, role]);
 
   useEffect(() => {
@@ -456,8 +471,9 @@ export default function Home() {
       <div className="content-wrap">
         <div className="page-heading"><div><p className="eyebrow">{isCoop ? "COOPERATIVE · SETTLEMENT OPERATIONS" : role === "veterinarian" ? "VETERINARY · ASSIGNED CASEWORK" : farm ? `${farm.county?.toUpperCase() || "KENYA"} · ${(farm.farming_system || "farm").toUpperCase()}` : "FARM IDENTITY & RECORDS"}</p><h1>{sectionTitle(active, isCoop, role)}</h1><p>{sectionDescription(active, farm?.name, isCoop, role)}</p></div><div className="heading-badges"><span className="synthetic-badge"><span />{demoMode ? "SYNTHETIC DEMO MODE" : isCoop ? "COOPERATIVE RECORDS" : farm?.is_synthetic ? "SYNTHETIC DEMO DATA" : farm ? "FARMER-SUBMITTED DATA" : "EMPTY WORKSPACE"}</span><span className="date-chip">{new Intl.DateTimeFormat("en-KE", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div></div>
 
-        {loading && token ? <div className="loading-strip"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
-        {isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} onNavigate={onNav} /> : null}
+        {loading && token ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
+        {workspaceError && !loading ? <div className="workspace-load-error" role="alert"><div><strong>Some workspace data could not be loaded</strong><p>{workspaceError}</p></div><button type="button" className="button button-outline" onClick={() => void reload()}><RefreshCw size={14} />Retry</button></div> : null}
+        {isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -543,8 +559,10 @@ function sectionDescription(section: Section, farmName?: string, coop = false, r
   return ({ farms: "Farm registration details, source labels and your digital farm passport.", veterinary: "Health events are linked to an animal and show whether a veterinarian verified them.", crops: "Connect plots, forage crops and compost applications to the farm record.", feed: "Track batch quantities, animal allocations, manure and compost as recorded links.", production: "Capture daily milk and crop production, then connect a record to a delivery lot.", traceability: "Follow a product lot from its source record to delivery and manage consent.", assistant: "AI output is a review draft. It cannot diagnose, prescribe or sign veterinary records.", settlements: "Compare member-level collection, settlement and payout figures with a named review process.", reports: "Transparent indicators built from farm records and simple rules.", settings: "Role, consent and local sync status for this workspace." } as Record<Section, string>)[section];
 }
 
-function Overview({ dashboard, alerts, resourceCycle, onNavigate }: { dashboard: AnyRecord | null; alerts: AnyRecord[]; resourceCycle: AnyRecord | null; onNavigate: (section: Section) => void }) {
-  if (!dashboard) return <Empty title="Farm records are loading" detail="The overview appears when the API returns your farm records." />;
+function Overview({ dashboard, alerts, resourceCycle, loading, error, onRetry, onNavigate }: { dashboard: AnyRecord | null; alerts: AnyRecord[]; resourceCycle: AnyRecord | null; loading: boolean; error: string; onRetry: () => Promise<void>; onNavigate: (section: Section) => void }) {
+  if (!dashboard && loading) return <Empty title="Loading farm records" detail="Terravanta is fetching this farm’s records from the API." />;
+  if (!dashboard && error) return <section className="card overview-load-state"><Empty title="Overview could not load" detail={error} /><button type="button" className="button button-outline" onClick={() => void onRetry()}><RefreshCw size={14} />Retry loading records</button></section>;
+  if (!dashboard) return <section className="card overview-load-state"><Empty title="No farm record yet" detail="Register your farm to connect livestock, crops, veterinary records and production." /><button type="button" className="button button-primary" onClick={() => onNavigate("farms")}>Register a farm <ArrowRight size={14} /></button></section>;
   const stats = dashboard.stats;
   const cards = [
     { title: "Registered animals", value: stats.animals, unit: "head", icon: "🐄", sub: "Across the active herd", tone: "green" },
