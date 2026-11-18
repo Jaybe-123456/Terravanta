@@ -1,8 +1,8 @@
 "use client";
 
-import { Activity, BarChart3, Boxes, ClipboardList, FileText, LayoutDashboard, Leaf, Settings2, ShieldCheck, Stethoscope, Tractor, Wheat } from "lucide-react";
+import { Activity, BarChart3, Boxes, ClipboardList, FileText, Inbox, LayoutDashboard, Leaf, ReceiptText, Settings2, ShieldCheck, Stethoscope, Tractor, Wheat } from "lucide-react";
 
-export type Section = "overview" | "farms" | "veterinary" | "crops" | "feed" | "production" | "traceability" | "assistant" | "settlements" | "reports" | "settings";
+export type Section = "overview" | "farms" | "veterinary" | "crops" | "feed" | "production" | "traceability" | "assistant" | "settlements" | "receivables" | "reports" | "settings";
 const farmerNavigation: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard }, { id: "farms", label: "Farms", icon: Tractor },
   { id: "veterinary", label: "Veterinary", icon: Stethoscope }, { id: "crops", label: "Crops & plots", icon: Leaf },
@@ -16,17 +16,24 @@ const veterinarianNavigation: { id: Section; label: string; icon: typeof LayoutD
 ];
 const cooperativeNavigation: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "Close desk", icon: LayoutDashboard }, { id: "settlements", label: "Payout settlements", icon: ClipboardList },
+  { id: "receivables", label: "Processor claims", icon: ReceiptText },
   { id: "traceability", label: "Shared member records", icon: Boxes }, { id: "reports", label: "Close history", icon: FileText },
+  { id: "settings", label: "Access & controls", icon: Settings2 },
+];
+const processorNavigation: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "receivables", label: "Supplier claim inbox", icon: Inbox },
   { id: "settings", label: "Access & controls", icon: Settings2 },
 ];
 
 export function Sidebar({ active, onChange, role, userName, farmName = "Farm workspace", location = "Location pending", workCount = 0 }: { active: Section; onChange: (section: Section) => void; role: string; userName?: string; farmName?: string; location?: string; workCount?: number }) {
   const accountName = userName || "Signed-in user";
   const initials = accountName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "TV";
-  const navigation = role === "cooperative_admin" ? cooperativeNavigation : role === "veterinarian" ? veterinarianNavigation : farmerNavigation;
+  const navigation = role === "cooperative_admin" ? cooperativeNavigation : role === "processor_admin" ? processorNavigation : role === "veterinarian" ? veterinarianNavigation : farmerNavigation;
   const integrity = role === "cooperative_admin"
     ? { title: "Close actions are auditable", note: "Approvals stay with your team" }
-    : role === "veterinarian"
+    : role === "processor_admin"
+      ? { title: "Responses are attributable", note: "Processor decisions stay on the record" }
+      : role === "veterinarian"
       ? { title: "Clinical review stays human", note: "Sign only records you review" }
       : { title: "Farm records protected", note: "Sharing is consent controlled" };
   return <aside className="sidebar">
@@ -34,7 +41,7 @@ export function Sidebar({ active, onChange, role, userName, farmName = "Farm wor
       <span className="brand-mark"><Leaf size={20} /></span><span>terravanta<small>FARM INTELLIGENCE</small></span>
     </a>
     <div className="farm-switcher"><span className="farm-avatar">TV</span><div><strong>{farmName}</strong><small>{location}</small></div><span className="chevron">⌄</span></div>
-    <p className="nav-label">{role === "cooperative_admin" ? "PAYOUT OPERATIONS" : role === "veterinarian" ? "CASEWORK" : "WORKSPACE"}</p>
+    <p className="nav-label">{role === "cooperative_admin" ? "PAYOUT & CLAIMS" : role === "processor_admin" ? "ACCOUNTS PAYABLE" : role === "veterinarian" ? "CASEWORK" : "WORKSPACE"}</p>
     <nav aria-label="Main navigation" className="nav-list">
       {navigation.map(({ id, label, icon: Icon }) => <button type="button" key={id} onClick={() => onChange(id)} className={`nav-item ${active === id ? "active" : ""}`} aria-current={active === id ? "page" : undefined}>
         <Icon size={18} strokeWidth={1.8} /><span>{label}</span>{workCount > 0 && ((role === "cooperative_admin" && id === "settlements") || (role === "veterinarian" && id === "overview")) ? <em className="nav-count">{workCount > 99 ? "99+" : workCount}</em> : null}

@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     nvidia_parse_url: str = ""
     nvidia_parse_api_key: str = ""
     uploads_dir: str = "./data/uploads"
+    evidence_storage_backend: str = "local"
+    evidence_local_storage_persistent: bool = False
+    evidence_s3_bucket: str = ""
+    evidence_s3_region: str = "us-east-1"
+    evidence_s3_endpoint_url: str = ""
+    evidence_s3_access_key: str = ""
+    evidence_s3_secret_key: str = ""
+    evidence_max_file_bytes: int = 15_000_000
     ai_timeout_seconds: int = 35
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
 
@@ -66,6 +74,16 @@ class Settings(BaseSettings):
                 raise ValueError("Production CORS_ORIGINS must list explicit origins")
             if self.enable_synthetic_data:
                 raise ValueError("Synthetic data must be disabled in production")
+        return self
+
+    @model_validator(mode="after")
+    def validate_evidence_storage_configuration(self):
+        if self.evidence_storage_backend not in {"local", "s3"}:
+            raise ValueError("EVIDENCE_STORAGE_BACKEND must be local or s3")
+        if self.evidence_storage_backend == "s3" and not self.evidence_s3_bucket:
+            raise ValueError("EVIDENCE_S3_BUCKET is required when S3 evidence storage is enabled")
+        if self.evidence_max_file_bytes < 1024 or self.evidence_max_file_bytes > 50_000_000:
+            raise ValueError("EVIDENCE_MAX_FILE_BYTES must be between 1024 and 50000000")
         return self
 
 

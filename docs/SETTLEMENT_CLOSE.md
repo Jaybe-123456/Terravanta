@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-The settlement close is the first implemented step toward Terravanta's proposed cooperative-paid settlement-assurance service. It reconciles three existing UTF-8 CSV exports for a cooperative's period close: farmer/collection intake, processor settlement, and farmer payouts. It does not replace the cooperative's MIS, initiate or certify a payment, edit source records, send a farmer statement automatically, or establish that the service has product-market fit. The buyer, willingness to pay, source-system gaps, and the economic value of the close still need to be validated with real cooperatives.
+The settlement close is an implemented **member-payable** workflow: it reconciles three UTF-8 CSV exports for a cooperative's period close—collection intake, processor settlement and member payouts. It is separate from Terravanta's new proposed **seller-side receivables assurance** domain, which would track what a cooperative claims a processor owes it. This close does not establish that processor receivable, replace the MIS, initiate/certify a payment, edit source records, send a statement automatically or prove product-market fit. The buyer, willingness to pay, source gaps and economic value remain unvalidated. See [receivables assurance](RECEIVABLES_ASSURANCE.md) for the separate product and data boundary.
 
 ## Input contracts
 

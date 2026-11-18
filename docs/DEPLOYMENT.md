@@ -1,59 +1,56 @@
-# CI and production deployment
+# CI/CD and production deployment
 
-## What the pipeline does
+## Current deployment path
 
-`.github/workflows/ci-cd.yml` runs API tests and the web typecheck, tests and optimized build for pull requests and pushes to `main`. It never receives production secrets during those jobs. On `main`, the production job remains skipped until the repository variable `PRODUCTION_DEPLOY_ENABLED` is exactly `true`. Once enabled, it builds revision-tagged API and web images, publishes them to GHCR, copies the production Compose and Caddy files to the VPS, then rolls out the same commit and waits for health checks.
+Production uses GitHub Actions for CI, Render for the FastAPI/PostGIS service, and Vercel for the Next.js application. The GitHub workflow does not publish GHCR images or connect to a VPS. The older `docker-compose.production.yml` and `Caddyfile` remain an optional self-managed deployment path and are not part of this release workflow.
 
-The production job uses a GitHub `production` environment. Configure required reviewers there if you want a manual approval gate before credentials are released. GitHub recommends least-privilege workflow permissions and immutable action references; this workflow pins its action dependencies to full commit SHAs and requests package-write permission only in the release job. Review and update the action SHAs as part of dependency maintenance.
+`.github/workflows/ci-cd.yml` runs on pull requests and pushes to `main`:
 
-## Required infrastructure
+- `API tests` runs the API suite on an isolated SQLite database.
+- `PostGIS migration check` applies every Alembic migration to PostGIS 16 and verifies the migration head.
+- `Web checks and production build` runs TypeScript, browser-storage tests, and the optimized Next.js build in the access-code auth mode used by the production pilot.
 
-- A Linux VPS with Docker Engine and Docker Compose v2, a static public IP, and inbound TCP ports 80 and 443 open.
-- A DNS A/AAAA record for the production hostname pointing to that VPS before the first deploy. Caddy obtains and renews HTTPS certificates.
-- A dedicated Terravanta Supabase project with email confirmation enabled and the production URL added to its Auth redirect allowlist.
-- SSH deploy user restricted to this host, with permission to run Docker Compose in `/opt/terravanta`.
-- A GHCR read-only token for the VPS (`read:packages`) and the GitHub Actions `GITHUB_TOKEN` package-write permission.
-- Off-host encrypted database and upload backups plus a tested restore procedure before real-farm production use. The provided Compose file persists database and uploads on the VPS; it is not a backup service or high-availability design.
+The jobs use placeholder/local configuration only; they receive no production credentials. Render is configured for `autoDeployTrigger: checksPass`, so its Git-connected service deploys `main` after the repository checks pass. Vercel creates a production deployment from the production branch; configure Vercel Deployment Checks to hold promotion until the three GitHub checks above pass. Vercel’s Git integration and Render’s Git integration perform the provider deployments; no deploy key, GHCR token, Render deploy hook, or Vercel token is needed in GitHub Actions.
 
-## GitHub configuration
+## One-time provider configuration
 
-Set repository variables:
+### GitHub
 
-| Variable | Value |
+Confirm the connected repository is `Jaybe-123456/Terravanta`, the production branch is `main`, and Actions are enabled. Keep the workflow’s `contents: read` permission. No `PRODUCTION_DEPLOY_ENABLED` variable or SSH/GHCR secrets are used by this pipeline.
+
+For direct pushes, branch protection is optional. If you use pull requests, require the `API tests`, `PostGIS migration check`, and `Web checks and production build` statuses before merge. Keep these job names stable if Vercel Deployment Checks or branch rules reference them.
+
+### Render
+
+The Render API service must be linked to `Jaybe-123456/Terravanta` on `main` and use the checked-in Blueprint’s **After CI Checks Pass** deployment behavior (`autoDeployTrigger: checksPass`). Confirm the live service has the production environment variables and a private persistent disk from [the Render deployment guide](RENDER_DEPLOYMENT.md). Startup applies Alembic migrations before Uvicorn accepts traffic. Keep one API instance while evidence files use Render’s local persistent disk.
+
+### Vercel
+
+The Vercel project must be linked to `Jaybe-123456/Terravanta`, use `main` as its Production Branch, and have Root Directory `apps/web`. Keep the Next.js framework setting and the output directory `.next` from `apps/web/vercel.json`.
+
+Set these in the Vercel **Production** environment and redeploy after changing them:
+
+| Variable | Production value |
 | --- | --- |
-| `PRODUCTION_DEPLOY_ENABLED` | `true` only after the host and secrets are ready |
-| `PUBLIC_DOMAIN` | The public hostname, for example `app.example.co.ke` |
-| `SUPABASE_URL` | The dedicated Terravanta project's URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon client key; never use a service-role key |
+| `NEXT_PUBLIC_API_URL` | `https://terravanta.onrender.com` |
+| `NEXT_PUBLIC_AUTH_MODE` | `access_code` for the current email-code pilot |
+| `NEXT_PUBLIC_SUPABASE_URL` | Terravanta Supabase project URL; needed when using `supabase` auth mode |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon key only; needed for `supabase` auth mode, never use a service-role key |
 
-Set these secrets in the GitHub `production` environment:
+Open **Project Settings → Deployment Checks** and add the GitHub checks `API tests`, `PostGIS migration check`, and `Web checks and production build` for Production. This lets Vercel build a commit while holding its production domain promotion until those checks pass. Verify the connected Git project and exact Production Branch before the first push.
 
-| Secret | Value |
-| --- | --- |
-| `PROD_SSH_HOST` | VPS hostname or IP |
-| `PROD_SSH_USER` | Restricted deployment username |
-| `PROD_SSH_PORT` | SSH port, usually `22` |
-| `PROD_SSH_PRIVATE_KEY` | Deploy key private half; install the public half for this user |
-| `PROD_SSH_KNOWN_HOSTS` | Verified `known_hosts` line for the VPS; do not disable host-key checks |
-| `GHCR_PULL_USER` | GitHub account with package read access |
-| `GHCR_PULL_TOKEN` | Fine-scoped token with `read:packages` for the Terravanta package |
+## Release flow
 
-## First server setup
+1. Push the reviewed commit to `main` in `Jaybe-123456/Terravanta`.
+2. In GitHub Actions, wait for all three checks to pass. A failure blocks the Render deploy; Vercel must have the Deployment Checks above enabled to block production promotion as well.
+3. In Render, confirm the API deploy for that commit is live and that the deploy log shows `alembic upgrade head` completed.
+4. In Vercel, confirm the production deployment for the same commit passed Deployment Checks and was promoted to `https://terravanta-five.vercel.app`.
+5. Check `https://terravanta.onrender.com/health` and `/docs`, then open the Vercel site and verify sign-in and a read/write workflow using an authorized account.
 
-On the Linux VPS, create `/opt/terravanta/.env.production` from the checked-in `.env.production.example`. Replace every placeholder. Use long random hexadecimal values for `POSTGRES_PASSWORD` and `DEMO_AUTH_SECRET` so the database URL does not need special-character escaping. Keep this file readable only by the deployment user (`chmod 600`). Do not commit it or paste its contents into logs or chat.
+If a deploy fails, inspect that provider’s build/runtime logs and keep the previous live revision until the migration and new app version are understood. Alembic migrations run during API startup; take a database restore point and review migration compatibility before deploying schema changes. A rollback across a destructive migration requires a tested restore plan.
 
-Set `PUBLIC_DOMAIN`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `IMAGE_PREFIX=ghcr.io/jaybe-123456/terravanta`, and `IMAGE_TAG` in that file. Use a deployed commit SHA for any manual rollout; the GitHub workflow overrides it with the exact revision being deployed. Optional NVIDIA credentials stay blank until the model account, terms and data controls are approved. The API refuses production startup if auth is misconfigured or synthetic data is enabled.
+## Operational boundary
 
-The GitHub deployment logs into GHCR on the server using the read-only token, uploads `docker-compose.production.yml` and `Caddyfile`, pulls both images tagged with the commit SHA and runs Alembic migrations through the API container before serving traffic. PostgreSQL and uploads stay on named VPS volumes. The database has no public port; only Caddy exposes 80/443. The reverse proxy sends `/api/v1/*` and API docs/health routes to FastAPI, while `/api/session` stays on Next.js for the secure refresh-token cookie.
+The deployment pipeline does not make the product ready for live financial files by itself. Before a real cooperative upload, confirm written authority, named-user access, private evidence storage, backups and restore, retention/deletion, malware scanning, incident handling, and the cooperative’s approved transfer process. See [receivables assurance](RECEIVABLES_ASSURANCE.md) and [the cooperative pilot kit](COOPERATIVE_PILOT_KIT.md).
 
-## Manual workflow and rollback
-
-For the first release, complete the server setup and configure GitHub variables/secrets above. Push to `main`; CI must pass and the production environment approval must be granted. To roll back, redeploy a previously successful image by checking out that commit and using the production workflow, or add an explicit rollback workflow before operating a customer dataset. Do not roll back across a destructive database migration without a tested backup and migration plan.
-
-Local validation uses the existing `docker-compose.yml` and does not require enabling the production release job:
-
-```powershell
-docker compose --env-file .env.example -f docker-compose.yml config --quiet
-```
-
-Production planning: use [the product market wedge and pilot plan](GO_TO_MARKET.md) and [the reconciliation workflow contract](COOPERATIVE_RECONCILIATION.md). The current VPS topology is a pilot deployment path. Before production processing of identifiable farm records, complete backups/restore, storage retention and malware scanning, monitoring/alerting, incident response, operator access review and privacy notices.
+Render documents Git deploys after CI checks pass in its [deploy documentation](https://render.com/docs/deploys). Vercel documents production Git deploys and deployment checks in its [Git integration](https://vercel.com/docs/git) and [Deployment Checks](https://vercel.com/docs/deployment-checks) guides.

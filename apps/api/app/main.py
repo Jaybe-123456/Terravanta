@@ -43,6 +43,7 @@ from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, 
 from .settlement import parse_settlement_sources
 from .security import bearer, current_identity, current_user, issue_access_code_token, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
 from .seed import FARMER_ID, FARM_ID, seed
+from .receivables import router as receivables_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("terravanta")
@@ -106,6 +107,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Terravanta API", version="1.0.0", description="Veterinary-first farm intelligence API. Optional demonstration records are synthetic.", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.include_router(receivables_router)
 
 
 def dump(row, exclude: set[str] | None = None) -> dict:

@@ -33,7 +33,9 @@ https://<render-api-host>/docs
 
 ## Connect the Vercel frontend
 
-In the Vercel project for Terravanta, add these Production environment variables:
+Link the Vercel project to `Jaybe-123456/Terravanta`, set Production Branch to `main`, and set Root Directory to `apps/web`. Keep the framework set to Next.js and the standard `.next` output directory in `apps/web/vercel.json`.
+
+Add these Production environment variables:
 
 | Variable | Value |
 | --- | --- |
@@ -43,6 +45,8 @@ In the Vercel project for Terravanta, add these Production environment variables
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Required only for `supabase` mode |
 
 Save the variables and redeploy the Production deployment because `NEXT_PUBLIC_API_URL` is compiled into the frontend build. Add the Vercel production URL to Supabase's redirect allowlist. The API permits the exact origin in `PUBLIC_APP_ORIGIN`; redeploy the API if you change it.
+
+The repository's GitHub Actions workflow checks the API suite, PostGIS migrations and web build. In Vercel **Project Settings → Deployment Checks**, add the GitHub checks `API tests`, `PostGIS migration check`, and `Web checks and production build` for Production. Vercel can then build the production commit while holding promotion to `terravanta-five.vercel.app` until those checks pass. Render's `autoDeployTrigger: checksPass` independently waits for the GitHub checks before deploying the API.
 
 For Vercel Preview deployments, add their exact origin to Render's comma-separated `CORS_ORIGINS` only if you intentionally want previews to access the same real database. Keep preview access off by default to avoid mixing development builds with production farm records. If the stable production Vercel domain changes, update `PUBLIC_APP_ORIGIN` in Render and redeploy the API.
 
@@ -60,6 +64,14 @@ Users request codes directly in the sign-in form; no administrator PowerShell co
 - The API container applies Alembic migrations during startup, so deploy one instance at a time. Review every schema change and have a database restore point before production schema changes.
 - Confirm Render's Postgres backups and retention in the database dashboard, and test restoring a backup before storing identifiable farm records.
 - Add monitoring, incident response, access reviews, privacy notice and retention policy before inviting real farmers. Keep NVIDIA credentials unset until external processing terms and consent are approved.
+
+## Receivables pilot setup
+
+The checked-in Render Blueprint enables the single-instance persistent disk for private claim files (`EVIDENCE_STORAGE_BACKEND=local`, `EVIDENCE_LOCAL_STORAGE_PERSISTENT=true`, `UPLOADS_DIR=/var/data/uploads`). Confirm the disk is attached to the API service and the migration completed through `0007_receivables_pilot_decisions` before using the claim screens. Do not increase API instances while using local-disk evidence storage. For multi-instance operation, switch to a private S3-compatible bucket, provision dedicated credentials or an instance role, block public access, and test retrieval and deletion before deployment.
+
+Cooperative and processor roles are assigned by a trusted operator after the invited user accepts an account invitation; public sign-up cannot grant staff roles. Use the operator CLI from an authorized environment connected to the production database. Create each organization once, record its UUID in the organization's onboarding handoff, then provision named users. Do not send database credentials or Supabase service-role keys to the cooperative. The cooperative links a processor using its organization ID; that ID must be shared through the authorized onboarding channel.
+
+Before any live upload, obtain written authority for the specific claim records and agree on purpose, named users, retention, backup, deletion and incident handling. Current uploads accept PDF/UTF-8 CSV, store privately and validate hashes; malware scanning, automatic retention/deletion and restore testing are not implemented. The case export contains the complete evidence files, so treat it as confidential and transfer it through the cooperative's approved channel.
 
 ## Local checks
 

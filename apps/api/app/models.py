@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -444,6 +444,323 @@ class SettlementCloseItem(Base):
     review_note: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     __table_args__ = (UniqueConstraint("close_id", "member_code", name="uq_settlement_member_per_close"),)
+
+
+class EvidenceArtifact(Base):
+    """Private, immutable source-file metadata for receivable evidence."""
+    __tablename__ = "evidence_artifacts"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    uploaded_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    source_party: Mapped[str] = mapped_column(String(32), default="seller")
+    source_system: Mapped[str] = mapped_column(String(120), default="manual_upload")
+    source_reference: Mapped[str] = mapped_column(String(160), default="")
+    filename: Mapped[str] = mapped_column(String(255))
+    media_type: Mapped[str] = mapped_column(String(120))
+    artifact_type: Mapped[str] = mapped_column(String(60))
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(Text)
+    sensitivity: Mapped[str] = mapped_column(String(32), default="confidential")
+    retention_until: Mapped[object | None] = mapped_column(Date, nullable=True)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_evidence_artifact_id_org"),
+        UniqueConstraint("organization_id", "sha256", name="uq_evidence_artifact_org_hash"),
+        CheckConstraint("source_party IN ('seller', 'counterparty', 'third_party', 'system')", name="ck_evidence_artifact_source_party"),
+    )
+
+
+class SourceMappingProfile(Base):
+    """Versioned, human-approved mapping from a named source export."""
+    __tablename__ = "source_mapping_profiles"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    source_system: Mapped[str] = mapped_column(String(120))
+    record_type: Mapped[str] = mapped_column(String(60))
+    schema_fingerprint: Mapped[str] = mapped_column(String(64))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(24), default="draft")
+    mapping_definition: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    approved_by: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_source_mapping_profile_id_org"),
+        UniqueConstraint("organization_id", "source_system", "record_type", "version", name="uq_source_mapping_profile_org_source_version"),
+        CheckConstraint("version > 0", name="ck_source_mapping_profile_version_positive"),
+        CheckConstraint("status IN ('draft', 'approved', 'retired')", name="ck_source_mapping_profile_status"),
+    )
+
+
+class CounterpartyRelationship(Base):
+    """A seller cooperative's explicit relationship with a processor or buyer."""
+    __tablename__ = "counterparty_relationships"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    counterparty_organization_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=True, index=True)
+    counterparty_name: Mapped[str] = mapped_column(String(180))
+    relationship_type: Mapped[str] = mapped_column(String(40), default="processor")
+    external_reference: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_counterparty_relationship_id_org"),
+        UniqueConstraint("id", "organization_id", "counterparty_organization_id", name="uq_counterparty_relationship_id_org_counterparty"),
+        UniqueConstraint("organization_id", "external_reference", name="uq_counterparty_relationship_org_ref"),
+        CheckConstraint("relationship_type IN ('processor', 'buyer', 'aggregator', 'other')", name="ck_counterparty_relationship_type"),
+        CheckConstraint("status IN ('pending', 'active', 'suspended')", name="ck_counterparty_relationship_status"),
+    )
+
+
+class SupplyContract(Base):
+    """A versioned, human-reviewed snapshot of seller/buyer commercial terms."""
+    __tablename__ = "supply_contracts"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    relationship_id: Mapped[object] = mapped_column(Uuid)
+    terms_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    contract_reference: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    effective_from: Mapped[object] = mapped_column(Date)
+    effective_to: Mapped[object | None] = mapped_column(Date, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    terms_review_status: Mapped[str] = mapped_column(String(32), default="seller_asserted")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    terms_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["relationship_id", "organization_id"], ["counterparty_relationships.id", "counterparty_relationships.organization_id"], name="fk_supply_contract_relationship_org"),
+        ForeignKeyConstraint(["terms_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_supply_contract_terms_artifact_org"),
+        UniqueConstraint("id", "organization_id", name="uq_supply_contract_id_org"),
+        UniqueConstraint("organization_id", "contract_reference", "version", name="uq_supply_contract_org_ref_version"),
+        CheckConstraint("version > 0", name="ck_supply_contract_version_positive"),
+        CheckConstraint("effective_to IS NULL OR effective_to >= effective_from", name="ck_supply_contract_effective_dates"),
+        CheckConstraint("terms_review_status IN ('seller_asserted', 'counterparty_confirmed', 'under_review')", name="ck_supply_contract_review_status"),
+        CheckConstraint("status IN ('draft', 'active', 'superseded', 'expired')", name="ck_supply_contract_status"),
+    )
+
+
+class ReceivableCase(Base):
+    """Seller-side assertion of an amount due; confirmation and cash stay separate."""
+    __tablename__ = "receivable_cases"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    relationship_id: Mapped[object] = mapped_column(Uuid)
+    contract_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    counterparty_organization_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("organizations.id"), nullable=True, index=True)
+    source_document_type: Mapped[str] = mapped_column(String(40))
+    source_reference: Mapped[str] = mapped_column(String(160))
+    period_start: Mapped[object | None] = mapped_column(Date, nullable=True)
+    period_end: Mapped[object | None] = mapped_column(Date, nullable=True)
+    invoice_date: Mapped[object | None] = mapped_column(Date, nullable=True)
+    due_date: Mapped[object | None] = mapped_column(Date, nullable=True)
+    due_date_basis: Mapped[str] = mapped_column(String(32), default="unknown")
+    due_date_reviewed_by: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    due_date_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    asserted_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["relationship_id", "organization_id"], ["counterparty_relationships.id", "counterparty_relationships.organization_id"], name="fk_receivable_case_relationship_org"),
+        ForeignKeyConstraint(["contract_id", "organization_id"], ["supply_contracts.id", "supply_contracts.organization_id"], name="fk_receivable_case_contract_org"),
+        UniqueConstraint("organization_id", "source_reference", name="uq_receivable_case_org_source_ref"),
+        UniqueConstraint("id", "organization_id", "counterparty_organization_id", name="uq_receivable_case_id_org_counterparty"),
+        CheckConstraint("asserted_amount >= 0", name="ck_receivable_case_asserted_amount_nonnegative"),
+        CheckConstraint("period_end IS NULL OR period_start IS NULL OR period_end >= period_start", name="ck_receivable_case_period_dates"),
+        CheckConstraint("due_date_basis IN ('unknown', 'contract', 'manual_review')", name="ck_receivable_case_due_date_basis"),
+        CheckConstraint("(due_date IS NULL AND due_date_basis = 'unknown') OR (due_date IS NOT NULL AND due_date_basis IN ('contract', 'manual_review') AND due_date_reviewed_by IS NOT NULL AND due_date_reviewed_at IS NOT NULL)", name="ck_receivable_case_due_date_requires_review"),
+        CheckConstraint("status IN ('draft', 'asserted', 'submitted', 'counterparty_confirmed', 'partially_confirmed', 'disputed', 'partially_paid', 'paid', 'closed')", name="ck_receivable_case_status"),
+        Index("ix_receivable_cases_org_status_due", "organization_id", "status", "due_date"),
+    )
+
+
+class ReceivableCaseLine(Base):
+    """A normalized claim line whose amount and direction remain source-linked."""
+    __tablename__ = "receivable_case_lines"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    mapping_profile_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    line_number: Mapped[int] = mapped_column(Integer)
+    line_type: Mapped[str] = mapped_column(String(48))
+    direction: Mapped[str] = mapped_column(String(16), default="increase")
+    source_reference: Mapped[str] = mapped_column(String(160), default="")
+    occurred_on: Mapped[object | None] = mapped_column(Date, nullable=True)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
+    unit: Mapped[str] = mapped_column(String(24), default="")
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    evidence_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    source_locator: Mapped[str] = mapped_column(String(180), default="")
+    provenance_class: Mapped[str] = mapped_column(String(32), default="seller_attested")
+    created_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["case_id", "organization_id"], ["receivable_cases.id", "receivable_cases.organization_id"], ondelete="CASCADE", name="fk_receivable_case_line_case_org"),
+        ForeignKeyConstraint(["mapping_profile_id", "organization_id"], ["source_mapping_profiles.id", "source_mapping_profiles.organization_id"], name="fk_receivable_case_line_mapping_org"),
+        ForeignKeyConstraint(["evidence_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_receivable_case_line_artifact_org"),
+        UniqueConstraint("case_id", "line_number", name="uq_receivable_case_line_number"),
+        CheckConstraint("line_number > 0", name="ck_receivable_case_line_number_positive"),
+        CheckConstraint("line_type IN ('accepted_supply', 'quality_adjustment', 'deduction', 'credit_note', 'other')", name="ck_receivable_case_line_type"),
+        CheckConstraint("direction IN ('increase', 'decrease', 'informational')", name="ck_receivable_case_line_direction"),
+        CheckConstraint("amount >= 0", name="ck_receivable_case_line_amount_nonnegative"),
+        CheckConstraint("quantity IS NULL OR quantity >= 0", name="ck_receivable_case_line_quantity_nonnegative"),
+        CheckConstraint("provenance_class IN ('seller_attested', 'counterparty_supplied', 'third_party_evidence', 'system_derived')", name="ck_receivable_case_line_provenance"),
+        Index("ix_receivable_case_lines_case", "case_id"),
+    )
+
+
+class ReceivableEvidenceLink(Base):
+    __tablename__ = "receivable_evidence_links"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    artifact_id: Mapped[object] = mapped_column(Uuid)
+    evidence_role: Mapped[str] = mapped_column(String(48))
+    source_locator: Mapped[str] = mapped_column(String(180), default="")
+    linked_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["case_id", "organization_id"], ["receivable_cases.id", "receivable_cases.organization_id"], ondelete="CASCADE", name="fk_receivable_evidence_case_org"),
+        ForeignKeyConstraint(["artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_receivable_evidence_artifact_org"),
+        UniqueConstraint("case_id", "artifact_id", "evidence_role", "source_locator", name="uq_receivable_evidence_link"),
+        Index("ix_receivable_evidence_case_role", "case_id", "evidence_role"),
+    )
+
+
+class CounterpartyConfirmation(Base):
+    """Append-only response by an authenticated counterparty reviewer."""
+    __tablename__ = "counterparty_confirmations"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    counterparty_organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id"))
+    confirmed_by_user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    response_status: Mapped[str] = mapped_column(String(32))
+    asserted_amount_snapshot: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    confirmed_amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2), nullable=True)
+    disputed_amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    response_reference: Mapped[str] = mapped_column(String(160), default="")
+    response_note: Mapped[str] = mapped_column(Text, default="")
+    evidence_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["case_id", "organization_id", "counterparty_organization_id"], ["receivable_cases.id", "receivable_cases.organization_id", "receivable_cases.counterparty_organization_id"], ondelete="CASCADE", name="fk_counterparty_confirmation_case_org_counterparty"),
+        ForeignKeyConstraint(["counterparty_organization_id", "confirmed_by_user_id"], ["organization_members.organization_id", "organization_members.user_id"], name="fk_counterparty_confirmation_user_org_member"),
+        ForeignKeyConstraint(["evidence_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_counterparty_confirmation_artifact_org"),
+        CheckConstraint("response_status IN ('accepted', 'partially_accepted', 'disputed', 'rejected', 'needs_information')", name="ck_counterparty_confirmation_status"),
+        CheckConstraint("asserted_amount_snapshot >= 0", name="ck_counterparty_confirmation_asserted_nonnegative"),
+        CheckConstraint("confirmed_amount IS NULL OR confirmed_amount >= 0", name="ck_counterparty_confirmation_confirmed_nonnegative"),
+        CheckConstraint("disputed_amount IS NULL OR disputed_amount >= 0", name="ck_counterparty_confirmation_disputed_nonnegative"),
+        Index("ix_counterparty_confirmations_case_time", "case_id", "confirmed_at"),
+    )
+
+
+class CashReceipt(Base):
+    """Observed inbound funds only; never a payment instruction."""
+    __tablename__ = "cash_receipts"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    source_reference: Mapped[str] = mapped_column(String(160))
+    received_on: Mapped[object] = mapped_column(Date)
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    payment_rail: Mapped[str] = mapped_column(String(40), default="unknown")
+    verification_status: Mapped[str] = mapped_column(String(32), default="seller_attested")
+    verified_by: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    recorded_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["evidence_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_cash_receipt_artifact_org"),
+        UniqueConstraint("organization_id", "source_reference", name="uq_cash_receipt_org_source_ref"),
+        UniqueConstraint("id", "organization_id", name="uq_cash_receipt_id_org"),
+        CheckConstraint("amount > 0", name="ck_cash_receipt_amount_positive"),
+        CheckConstraint("verification_status IN ('seller_attested', 'bank_evidence_reviewed', 'counterparty_confirmed')", name="ck_cash_receipt_verification_status"),
+        CheckConstraint("(verification_status = 'seller_attested' AND verified_by IS NULL AND verified_at IS NULL) OR (verification_status = 'bank_evidence_reviewed' AND verified_by IS NOT NULL AND verified_at IS NOT NULL AND evidence_artifact_id IS NOT NULL) OR (verification_status = 'counterparty_confirmed' AND verified_by IS NOT NULL AND verified_at IS NOT NULL)", name="ck_cash_receipt_verification_requires_review"),
+        Index("ix_cash_receipts_org_date", "organization_id", "received_on"),
+    )
+
+
+class CashAllocation(Base):
+    __tablename__ = "cash_allocations"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    receipt_id: Mapped[object] = mapped_column(Uuid)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2))
+    allocated_on: Mapped[object] = mapped_column(Date)
+    allocated_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    allocation_reference: Mapped[str] = mapped_column(String(160), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["receipt_id", "organization_id"], ["cash_receipts.id", "cash_receipts.organization_id"], ondelete="CASCADE", name="fk_cash_allocation_receipt_org"),
+        ForeignKeyConstraint(["case_id", "organization_id"], ["receivable_cases.id", "receivable_cases.organization_id"], ondelete="CASCADE", name="fk_cash_allocation_case_org"),
+        CheckConstraint("amount > 0", name="ck_cash_allocation_amount_positive"),
+        Index("ix_cash_allocations_case", "case_id"),
+    )
+
+
+class ReceivableCaseEvent(Base):
+    """Append-only workflow event; edits are represented by a new event."""
+    __tablename__ = "receivable_case_events"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    actor_user_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    from_status: Mapped[str] = mapped_column(String(32), default="")
+    to_status: Mapped[str] = mapped_column(String(32), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    evidence_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["case_id", "organization_id"], ["receivable_cases.id", "receivable_cases.organization_id"], ondelete="CASCADE", name="fk_receivable_case_event_case_org"),
+        ForeignKeyConstraint(["evidence_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_receivable_case_event_artifact_org"),
+        Index("ix_receivable_case_events_case_time", "case_id", "created_at"),
+    )
+
+
+class ReceivablesPilotDecision(Base):
+    """Append-only customer discovery outcome recorded by the cooperative account."""
+    __tablename__ = "receivables_pilot_decisions"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    organization_id: Mapped[object] = mapped_column(Uuid, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[object] = mapped_column(Uuid)
+    recorded_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"))
+    budget_owner_name: Mapped[str] = mapped_column(String(180))
+    budget_owner_title: Mapped[str] = mapped_column(String(120), default="")
+    budget_owner_organization: Mapped[str] = mapped_column(String(180))
+    decision: Mapped[str] = mapped_column(String(32))
+    decision_source: Mapped[str] = mapped_column(String(32))
+    price_amount: Mapped[Decimal | None] = mapped_column(Numeric(16, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="KES")
+    price_unit: Mapped[str] = mapped_column(String(120), default="")
+    decision_note: Mapped[str] = mapped_column(Text, default="")
+    next_step: Mapped[str] = mapped_column(String(500), default="")
+    evidence_artifact_id: Mapped[object | None] = mapped_column(Uuid, nullable=True)
+    decided_on: Mapped[object] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(["case_id", "organization_id"], ["receivable_cases.id", "receivable_cases.organization_id"], name="fk_receivables_pilot_decision_case_org"),
+        ForeignKeyConstraint(["evidence_artifact_id", "organization_id"], ["evidence_artifacts.id", "evidence_artifacts.organization_id"], name="fk_receivables_pilot_decision_artifact_org"),
+        CheckConstraint("decision IN ('approved_paid_repeat', 'conditional_paid_repeat', 'declined', 'not_decided')", name="ck_receivables_pilot_decision_status"),
+        CheckConstraint("decision_source IN ('direct_statement', 'email', 'meeting_notes', 'other')", name="ck_receivables_pilot_decision_source"),
+        CheckConstraint("price_amount IS NULL OR price_amount >= 0", name="ck_receivables_pilot_decision_price_nonnegative"),
+        CheckConstraint("decision <> 'approved_paid_repeat' OR (price_amount IS NOT NULL AND price_unit <> '' AND evidence_artifact_id IS NOT NULL)", name="ck_receivables_pilot_decision_approved_requires_price_evidence"),
+        Index("ix_receivables_pilot_decisions_case_time", "case_id", "created_at"),
+    )
 
 
 class QualityTest(Base):

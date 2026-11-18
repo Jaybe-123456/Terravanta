@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, 
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
+import { ReceivablesDesk } from "@/components/receivables-desk";
 import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, requestAccessCode as requestEmailCode, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
@@ -98,6 +99,12 @@ export default function Home() {
     setLoading(true);
     setWorkspaceError("");
     try {
+      if (currentRole === "processor_admin") {
+        setActive("receivables");
+        setFarm(null); setFarmId(""); setDashboard(null);
+        setLoading(false);
+        return;
+      }
       if (currentRole === "cooperative_admin") {
         const [shared, runs, closes] = await Promise.all([
           api<AnyRecord[]>("/api/v1/cooperative/deliveries", accessToken),
@@ -463,6 +470,7 @@ export default function Home() {
   const toFarm = (path: string) => `/api/v1/farms/${farmId}${path}`;
   const onNav = (section: Section) => { setActive(section); setMobileNav(false); };
   const isCoop = role === "cooperative_admin";
+  const isProcessor = role === "processor_admin";
   const farmLabel = farm?.name || "Farm workspace";
   const workCount = isCoop
     ? settlementCloses.filter((close) => close.status !== "approved").reduce((total, close) => total + Number(close.unresolved_exception_count ?? close.pending_review_count ?? 0), 0)
@@ -472,18 +480,18 @@ export default function Home() {
   if (!token) return <SignInScreen demoMode={demoMode} accessCodeMode={accessCodeMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRequestCode={requestSignInCode} onRegister={registerFarmer} onDemo={switchRole} />;
 
   return <div className="app-shell">
-    <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Settlement operations" : farmLabel} location={isCoop ? "Cooperative workspace" : `${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} workCount={workCount} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
+    <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Cooperative workspace" : isProcessor ? "Processor AP workspace" : farmLabel} location={isCoop ? "Cooperative organization" : isProcessor ? "Supplier claims" : `${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} workCount={workCount} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
     <main className="main-shell">
       <header className="topbar">
-        <div className="topbar-left"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumbs"><span>Workspace</span><span>/</span><strong>{isCoop ? "Settlement operations" : role === "veterinarian" ? "Veterinary casework" : farm?.name || "Overview"}</strong></div></div>
+        <div className="topbar-left"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumbs"><span>Workspace</span><span>/</span><strong>{isCoop ? "Cooperative operations" : isProcessor ? "Processor accounts payable" : role === "veterinarian" ? "Veterinary casework" : farm?.name || "Overview"}</strong></div></div>
         <div className="topbar-actions"><span className={`sync-state ${online ? "" : "offline"}`}><i />{online ? <Wifi size={14} /> : <CloudOff size={14} />}{online ? "Online" : "Offline"}{queued ? <b>{queued}</b> : null}</span><button className="icon-button refresh-button" title="Refresh records" onClick={() => void reload()}><RefreshCw size={17} /></button>{demoMode ? <label className="role-picker" aria-label="Switch synthetic demo role"><select value={role} onChange={(event) => void switchRole(event.target.value)}><option value="farmer">Farmer demo</option><option value="veterinarian">Veterinarian demo</option><option value="cooperative_admin">Cooperative demo</option></select><ChevronDown size={14} /></label> : <button className="button button-outline" onClick={() => void signOut()}><LogOut size={14} />Sign out</button>}</div>
       </header>
       <div className="content-wrap">
-        <div className="page-heading"><div><p className="eyebrow">{isCoop ? "COOPERATIVE · SETTLEMENT OPERATIONS" : role === "veterinarian" ? "VETERINARY · ASSIGNED CASEWORK" : farm ? `${farm.county?.toUpperCase() || "KENYA"} · ${(farm.farming_system || "farm").toUpperCase()}` : "FARM IDENTITY & RECORDS"}</p><h1>{sectionTitle(active, isCoop, role)}</h1><p>{sectionDescription(active, farm?.name, isCoop, role)}</p></div><div className="heading-badges"><span className="synthetic-badge"><span />{demoMode ? "SYNTHETIC DEMO MODE" : isCoop ? "COOPERATIVE RECORDS" : farm?.is_synthetic ? "SYNTHETIC DEMO DATA" : farm ? "FARMER-SUBMITTED DATA" : "EMPTY WORKSPACE"}</span><span className="date-chip">{new Intl.DateTimeFormat("en-KE", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div></div>
+        <div className="page-heading"><div><p className="eyebrow">{isProcessor ? "PROCESSOR · ACCOUNTS PAYABLE" : isCoop ? "COOPERATIVE · SETTLEMENT OPERATIONS" : role === "veterinarian" ? "VETERINARY · ASSIGNED CASEWORK" : farm ? `${farm.county?.toUpperCase() || "KENYA"} · ${(farm.farming_system || "farm").toUpperCase()}` : "FARM IDENTITY & RECORDS"}</p><h1>{sectionTitle(active, isCoop, role)}</h1><p>{sectionDescription(active, farm?.name, isCoop, role)}</p></div><div className="heading-badges"><span className="synthetic-badge"><span />{demoMode ? "SYNTHETIC DEMO MODE" : isProcessor ? "PROCESSOR RECORDS" : isCoop ? "COOPERATIVE RECORDS" : farm?.is_synthetic ? "SYNTHETIC DEMO DATA" : farm ? "FARMER-SUBMITTED DATA" : "EMPTY WORKSPACE"}</span><span className="date-chip">{new Intl.DateTimeFormat("en-KE", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div></div>
 
         {loading && token ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
         {workspaceError && !loading ? <div className="workspace-load-error" role="alert"><div><strong>Some workspace data could not be loaded</strong><p>{workspaceError}</p></div><button type="button" className="button button-outline" onClick={() => void reload()}><RefreshCw size={14} />Retry</button></div> : null}
-        {isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /> : null}
+        {(isCoop || isProcessor) && active === "receivables" ? <ReceivablesDesk role={role} token={token} /> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /> : active === "overview" ? <Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -550,15 +558,18 @@ function SignInScreen({ demoMode, accessCodeMode, busy, error, message, onSubmit
 }
 
 function sectionTitle(section: Section, coop: boolean, role: string) {
-  if (coop) return ({ overview: "Settlement close desk", settlements: "Milk payout settlements", traceability: "Consented member records", reports: "Settlement history", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Cooperative operations";
+  if (role === "processor_admin") return ({ receivables: "Supplier claim inbox", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Processor workspace";
+  if (coop) return ({ overview: "Settlement close desk", settlements: "Milk payout settlements", receivables: "Processor receivables", traceability: "Consented member records", reports: "Settlement history", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Cooperative operations";
   if (role === "veterinarian") return ({ overview: "Assigned case desk", farms: "Assigned farm records", veterinary: "Clinical case review", assistant: "Veterinary case assistant", reports: "Review activity", settings: "Workspace settings" } as Partial<Record<Section, string>>)[section] || "Veterinary workspace";
-  return ({ overview: "Your farm, at a glance", farms: "Farm identity & passport", veterinary: "Herd health records", crops: "Crops & land use", feed: "Feed & resource cycle", production: "Production records", traceability: "Traceability & sharing", assistant: "Veterinary intelligence", settlements: "Payout settlements", reports: "Farm reports", settings: "Workspace settings" } as Record<Section, string>)[section];
+  return ({ overview: "Your farm, at a glance", farms: "Farm identity & passport", veterinary: "Herd health records", crops: "Crops & land use", feed: "Feed & resource cycle", production: "Production records", traceability: "Traceability & sharing", assistant: "Veterinary intelligence", settlements: "Payout settlements", receivables: "Processor claims", reports: "Farm reports", settings: "Workspace settings" } as Record<Section, string>)[section];
 }
 
 function sectionDescription(section: Section, farmName?: string, coop = false, role = "farmer") {
+  if (role === "processor_admin") return section === "settings" ? "Processor workspace access and review responsibilities." : "Review cooperative claims, record your AP position, and leave a traceable response for the seller.";
   if (coop) return ({
     overview: "See the latest payout close, unresolved reviews and the next action for your finance team.",
     settlements: "Reconcile your source exports, resolve evidence-linked exceptions and approve a reviewable close.",
+    receivables: "Build an evidence-backed claim against a processor, age amounts from reviewed terms and record the counterparty response.",
     traceability: "Review delivery summaries shared by farm owners and keep source links visible.",
     reports: "Browse close periods and the review status recorded by your cooperative team.",
     settings: "Understand cooperative access, data scope and approval responsibilities.",
@@ -566,7 +577,7 @@ function sectionDescription(section: Section, farmName?: string, coop = false, r
   if (role === "veterinarian" && section === "overview") return "Work the assigned clinical queue by follow-up urgency and verification status.";
   if (role === "veterinarian" && section === "veterinary") return "Review submitted animal-health events, recorded evidence and follow-up dates for assigned farms.";
   if (section === "overview") return `Connected records across ${farmName || "your farm"}. Information is attributed to its source.`;
-  return ({ farms: "Farm registration details, source labels and your digital farm passport.", veterinary: "Health events are linked to an animal and show whether a veterinarian verified them.", crops: "Connect plots, forage crops and compost applications to the farm record.", feed: "Track batch quantities, animal allocations, manure and compost as recorded links.", production: "Capture daily milk and crop production, then connect a record to a delivery lot.", traceability: "Follow a product lot from its source record to delivery and manage consent.", assistant: "AI output is a review draft. It cannot diagnose, prescribe or sign veterinary records.", settlements: "Compare member-level collection, settlement and payout figures with a named review process.", reports: "Transparent indicators built from farm records and simple rules.", settings: "Role, consent and local sync status for this workspace." } as Record<Section, string>)[section];
+  return ({ farms: "Farm registration details, source labels and your digital farm passport.", veterinary: "Health events are linked to an animal and show whether a veterinarian verified them.", crops: "Connect plots, forage crops and compost applications to the farm record.", feed: "Track batch quantities, animal allocations, manure and compost as recorded links.", production: "Capture daily milk and crop production, then connect a record to a delivery lot.", traceability: "Follow a product lot from its source record to delivery and manage consent.", assistant: "AI output is a review draft. It cannot diagnose, prescribe or sign veterinary records.", settlements: "Compare member-level collection, settlement and payout figures with a named review process.", receivables: "Review processor claims and source records shared by your cooperative.", reports: "Transparent indicators built from farm records and simple rules.", settings: "Role, consent and local sync status for this workspace." } as Record<Section, string>)[section];
 }
 
 function Overview({ dashboard, alerts, resourceCycle, loading, error, onRetry, onNavigate }: { dashboard: AnyRecord | null; alerts: AnyRecord[]; resourceCycle: AnyRecord | null; loading: boolean; error: string; onRetry: () => Promise<void>; onNavigate: (section: Section) => void }) {

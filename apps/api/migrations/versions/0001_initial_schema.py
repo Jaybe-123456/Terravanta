@@ -22,7 +22,13 @@ def upgrade():
     # tables belong in follow-on revisions rather than being backfilled here.
     initial_tables = [
         table for table in Base.metadata.sorted_tables
-        if table.name not in {"reconciliation_runs", "reconciliation_items", "settlement_closes", "settlement_close_items"}
+        if table.name not in {
+            "reconciliation_runs", "reconciliation_items", "settlement_closes", "settlement_close_items",
+            "evidence_artifacts", "source_mapping_profiles", "counterparty_relationships", "supply_contracts",
+            "receivable_cases", "receivable_case_lines", "receivable_evidence_links",
+            "counterparty_confirmations", "cash_receipts", "cash_allocations", "receivable_case_events",
+            "receivables_pilot_decisions",
+        }
     ]
     Base.metadata.create_all(bind=bind, tables=initial_tables)
     if bind.dialect.name == "postgresql":

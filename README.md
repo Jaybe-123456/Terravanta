@@ -1,18 +1,20 @@
 # Terravanta
 
-Terravanta is a farm-record and operations product for Kenyan mixed farms. Its commercial direction is a system-agnostic milk settlement-assurance service for a cooperative or processor, with farmer-controlled records as the permissioned data layer. That service is a hypothesis, not validated product-market fit or an implemented payout workflow. Real-account mode is the default. It does not create synthetic records unless `ENABLE_SYNTHETIC_DATA=true` is explicitly set.
+Terravanta is a farm-record and operations product for Kenyan mixed farms. Its commercial hypothesis is cross-system receivables assurance: assemble, age and reconcile a cooperative's processor claim from contract, supply, acceptance, invoice and cash evidence, then capture a counterparty response. It is not a cooperative MIS, payment rail, lender or legal debt-certification service. This wedge is unvalidated; all demo records are synthetic. Real-account mode is the default. It does not create synthetic records unless `ENABLE_SYNTHETIC_DATA=true` is explicitly set.
 
 The product has three role-specific workspaces:
 
 - **Farmer:** register farms, plots and animals; record health, feed, crop–livestock resources and production; trace deliveries; grant or revoke a cooperative's delivery-summary access.
 - **Veterinarian:** review assigned open cases, verify farmer-submitted health events, and create clinical records. A verification signature is separate from AI output.
 - **Cooperative administrator:** view active, consented delivery summaries, reconcile settlement exports, review exceptions and approve a statement pack. Clinical and laboratory records are excluded from the cooperative sharing scope.
+- **Cooperative receivables:** create seller-asserted processor claims, attach source records, track reviewed-date aging, record receipts and export an evidence pack.
+- **Processor administrator:** review only claims sent to the processor organization and record an accept, partial, dispute, reject or information-request response.
 
-See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), and the [market wedge, GTM and PMF validation plan](docs/GO_TO_MARKET.md).
+See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
 
 To deploy the public API and managed PostGIS database on Render, use the [Render deployment guide](docs/RENDER_DEPLOYMENT.md) and the checked-in `render.yaml` Blueprint.
 
-The cooperative workspace now has two distinct jobs. The original intake workflow imports a daily collection sheet and matches rows to farmer-consented delivery records. The settlement-close workbench imports collection, processor settlement and payout exports, flags volume/amount discrepancies, requires named reviewer and close approval, and generates a statement-pack CSV. It uses deterministic backend rules and does not rely on NVIDIA, change source ledgers, initiate payments or claim validated savings. The contracts and limits are documented in [settlement close](docs/SETTLEMENT_CLOSE.md), while the proposed service, market risks and PMF gates are in [the market wedge plan](docs/GO_TO_MARKET.md).
+The cooperative workspace retains two separate finance workflows. Member payout close compares collection, processor settlement and member payout exports; receivables assurance records what the cooperative asserts a processor owes, what the processor responds and what receipts are allocated. One does not prove or update the other. Receivables is implemented as a manual product slice, but no real claim, processor response, paid renewal or PMF has been demonstrated. See [receivables assurance](docs/RECEIVABLES_ASSURANCE.md) and [the market wedge plan](docs/GO_TO_MARKET.md).
 
 ## Run locally with Docker Compose
 
@@ -49,11 +51,21 @@ docker compose exec api python -m app.operator create-cooperative --name "Exampl
 # Cooperative administrators must be linked to their organization.
 docker compose exec api python -m app.operator provision-user --supabase-user-id "<SUPABASE_USER_UUID>" --name "Cooperative Admin" --email "admin@example.org" --role cooperative_admin --organization-id "<ORGANIZATION_UUID>"
 
+# Create a processor organization and provision its named AP reviewer.
+docker compose exec api python -m app.operator create-processor --name "Example Milk Processor"
+docker compose exec api python -m app.operator provision-user --supabase-user-id "<SUPABASE_USER_UUID>" --name "Processor AP Reviewer" --email "ap@example.org" --role processor_admin --organization-id "<PROCESSOR_ORGANIZATION_UUID>"
+
 # Veterinarians must be assigned to a farm before they can review its cases.
 docker compose exec api python -m app.operator provision-user --supabase-user-id "<SUPABASE_USER_UUID>" --name "Veterinarian" --email "vet@example.org" --role veterinarian --farm-id "<FARM_UUID>"
 ```
 
-The operator command rejects identity/email mismatches, farmer role escalation and invalid organization/farm assignments. The farmer's traceability screen can grant a delivery-summary consent directly to a cooperative administrator's confirmed email; the cooperative API returns only that consented scope.
+The operator command rejects identity/email mismatches and invalid organization/farm assignments. It may convert a new farmer identity only if that account has no farm membership or farmer-created farm; it will not change a role that already owns farm records. The farmer's traceability screen can grant a delivery-summary consent directly to a cooperative administrator's confirmed email; the cooperative API returns only that consented scope.
+
+### Receivables evidence storage
+
+Local Compose stores claim files in the private `api_uploads` volume. The Render Blueprint mounts the private persistent disk at `/var/data`, selects the local private evidence backend and runs one API instance. Uploads accept PDF and UTF-8 CSV only, enforce a size limit, use random server-generated object keys, verify SHA-256 on every download/export and require case/organization authorization. A private S3-compatible backend is configurable through `EVIDENCE_S3_*`; block public access on that bucket.
+
+Before uploading a real financial record, obtain written authority for those exact sources and review backups, retention, access and deletion. The MVP does not provide malware scanning, an automatic expiry/deletion worker or shared local files across multiple API instances. It does not make a legal arrears finding, send a demand or initiate payment. A budget-owner decision is recorded as a cooperative user's attestation; an approved paid repeat also requires a quote, PO or decision email artifact.
 
 To stop the app while retaining its local database and uploads:
 
@@ -122,27 +134,13 @@ npm run build
 
 The API workflow tests use an isolated in-memory SQLite database. Frontend tests cover IndexedDB offline capture and account-scoped replay. Docker Compose can be syntax-checked without starting the engine using `docker compose --env-file .env.example config --quiet`.
 
-## Deploy next
+## Deploy to production
 
-1. Run the field discovery and pilot design in [GO_TO_MARKET.md](docs/GO_TO_MARKET.md); the wedge and numeric pilot gates are hypotheses, not demonstrated PMF.
-2. Provision managed PostgreSQL with PostGIS, private S3-compatible object storage, Supabase Auth, monitoring, backups and restore testing.
-3. Configure the dedicated Terravanta Supabase project, email verification, redirect allowlist, account recovery, rate limits and privacy notices. Farmer registration is self-service; veterinarian and cooperative invitations still require an operator workflow.
-4. Set API secrets and production config in a secret manager. Set explicit CORS origins and Supabase frontend build variables; keep `ENABLE_SYNTHETIC_DATA=false`.
-5. Build and deploy API/web containers with private database access and HTTPS. The API image applies Alembic migrations before server start. Confirm backup/restore, file limits and health checks.
-6. Rotate any credentials exposed in the original prompt. Configure NVIDIA credentials only after reviewing current endpoint/model availability, account terms and data handling. Test against a veterinarian-reviewed evaluation set before enabling it for a pilot.
-7. Onboard pilot farms with informed consent and verified source records. Existing local database volumes may retain synthetic rows from earlier development; they are not automatically deleted and must be separately reviewed before any real-data deployment.
+Production uses GitHub Actions for CI, Render for the FastAPI/PostGIS API and database, and Vercel for the Next.js frontend. Pushing to `main` in `Jaybe-123456/Terravanta` runs API tests, a PostGIS migration check and web checks/build. Render’s Git deployment is set to wait for checks to pass; Vercel should require the same GitHub checks through Project Settings → Deployment Checks. Those provider integrations perform deployment without production secrets in GitHub Actions.
 
-### CI and production release
+Before storing real cooperative records, confirm written authority, private evidence storage, backups and restore, retention/deletion, malware scanning, incident response and named-user access. Existing local database volumes may still contain synthetic rows and are not automatically deleted. Keep `ENABLE_SYNTHETIC_DATA=false` in production.
 
-The GitHub workflow runs API tests, web typechecks/tests and an optimized frontend build on pushes and pull requests to `main`. The production release remains gated until `PRODUCTION_DEPLOY_ENABLED=true` is configured and the production GitHub environment secrets are present. It publishes commit-tagged images to GHCR, deploys to a Linux Docker VPS behind Caddy HTTPS, and waits for service health checks. It never places a database password, NVIDIA key or Supabase service-role key in the browser build.
-
-Follow [CI/CD and production deployment](docs/DEPLOYMENT.md) for the VPS prerequisites, exact GitHub variables and secrets, first-host setup, and rollback guidance. The provided VPS setup persists Postgres and uploads locally; configure encrypted off-host backups and a tested restore before storing pilot farm records.
-
-To validate production Compose syntax locally, from the repository root run:
-
-```powershell
-docker compose --env-file .env.production.example -f docker-compose.production.yml config --quiet
-```
+The API runs `alembic upgrade head` at startup. After a push, confirm the Render service is live and check `https://terravanta.onrender.com/health`; then confirm the Vercel production deployment passed its checks and is serving `https://terravanta-five.vercel.app`. See [CI/CD and production deployment](docs/DEPLOYMENT.md) for the exact provider setup and release checks. `docker-compose.production.yml` and `Caddyfile` remain an optional self-managed setup and are not used by the current CI/CD workflow.
 
 ## Technical stack
 

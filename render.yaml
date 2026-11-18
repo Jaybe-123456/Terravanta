@@ -37,6 +37,12 @@ services:
         value: "false"
       - key: UPLOADS_DIR
         value: /var/data/uploads
+      - key: EVIDENCE_STORAGE_BACKEND
+        value: local
+      - key: EVIDENCE_LOCAL_STORAGE_PERSISTENT
+        value: "true"
+      - key: EVIDENCE_MAX_FILE_BYTES
+        value: "15000000"
       - key: AI_TIMEOUT_SECONDS
         value: "35"
     disk:

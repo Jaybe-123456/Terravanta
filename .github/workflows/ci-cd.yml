@@ -37,6 +37,59 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
 
+  api-migrations:
+    name: PostGIS migration check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+psycopg://terravanta:ci-only-password@localhost:5432/terravanta
+      DEMO_AUTH_SECRET: ci-only-test-secret-not-for-deployment
+      ENABLE_SYNTHETIC_DATA: "false"
+    services:
+      postgis:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: terravanta
+          POSTGRES_USER: terravanta
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U terravanta -d terravanta"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Apply all database migrations
+        run: alembic upgrade head
+      - name: Verify PostGIS and migration head
+        run: |
+          python - <<'PY'
+          from sqlalchemy import create_engine, text
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+          import os
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.connect() as connection:
+              assert connection.scalar(text("SELECT PostGIS_Version()"))
+              applied = connection.scalar(text("SELECT version_num FROM alembic_version"))
+          expected = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+          assert applied == expected, f"Expected Alembic head {expected}, got {applied}"
+          print(f"PostGIS is available; migration head is {applied}")
+          PY
+
   web:
     name: Web checks and production build
     runs-on: ubuntu-latest
@@ -45,9 +98,7 @@ jobs:
         working-directory: apps/web
     env:
       NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_AUTH_MODE: supabase
-      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-publishable-key
+      NEXT_PUBLIC_AUTH_MODE: access_code
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -59,72 +110,3 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-
-  release:
-    name: Publish and deploy production
-    needs: [api, web]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    environment: production
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate production build configuration
-        env:
-          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN }}
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-        run: |
-          test -n "$PUBLIC_DOMAIN" || { echo "Set production variable PUBLIC_DOMAIN"; exit 1; }
-          test -n "$SUPABASE_URL" || { echo "Set production variable SUPABASE_URL"; exit 1; }
-          test -n "$SUPABASE_ANON_KEY" || { echo "Set production variable NEXT_PUBLIC_SUPABASE_ANON_KEY"; exit 1; }
-      - name: Build and publish API and web images
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN }}
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-        run: |
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          image_prefix="ghcr.io/${owner}/terravanta"
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          docker build --label "org.opencontainers.image.revision=${GITHUB_SHA}" -t "${image_prefix}-api:${GITHUB_SHA}" apps/api
-          docker build --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
-            --build-arg "NEXT_PUBLIC_API_URL=https://${PUBLIC_DOMAIN}" \
-            --build-arg "NEXT_PUBLIC_AUTH_MODE=supabase" \
-            --build-arg "NEXT_PUBLIC_SUPABASE_URL=${SUPABASE_URL}" \
-            --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}" \
-            -t "${image_prefix}-web:${GITHUB_SHA}" apps/web
-          docker push "${image_prefix}-api:${GITHUB_SHA}"
-          docker push "${image_prefix}-web:${GITHUB_SHA}"
-      - name: Configure deployment SSH
-        env:
-          DEPLOY_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
-          DEPLOY_HOST: ${{ secrets.PROD_SSH_HOST }}
-          DEPLOY_USER: ${{ secrets.PROD_SSH_USER }}
-          DEPLOY_PORT: ${{ secrets.PROD_SSH_PORT }}
-          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
-          GHCR_PULL_USER: ${{ secrets.GHCR_PULL_USER }}
-        run: |
-          test -n "$DEPLOY_KEY" && test -n "$DEPLOY_KNOWN_HOSTS" && test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_PORT"
-          test -n "$GHCR_PULL_TOKEN" && test -n "$GHCR_PULL_USER"
-          install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/terravanta_deploy"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/terravanta_deploy" "$HOME/.ssh/known_hosts"
-          printf '%s' "$GHCR_PULL_TOKEN" | ssh -i "$HOME/.ssh/terravanta_deploy" -p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "docker login ghcr.io --username '$GHCR_PULL_USER' --password-stdin"
-          ssh -i "$HOME/.ssh/terravanta_deploy" -p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p /opt/terravanta"
-          scp -i "$HOME/.ssh/terravanta_deploy" -P "$DEPLOY_PORT" -o StrictHostKeyChecking=yes docker-compose.production.yml Caddyfile "$DEPLOY_USER@$DEPLOY_HOST:/opt/terravanta/"
-      - name: Roll out the tested revision
-        env:
-          DEPLOY_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-          DEPLOY_HOST: ${{ secrets.PROD_SSH_HOST }}
-          DEPLOY_USER: ${{ secrets.PROD_SSH_USER }}
-          DEPLOY_PORT: ${{ secrets.PROD_SSH_PORT }}
-        run: |
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          ssh -i "$HOME/.ssh/terravanta_deploy" -p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd /opt/terravanta && IMAGE_PREFIX=ghcr.io/${owner}/terravanta IMAGE_TAG=${GITHUB_SHA} docker compose --env-file .env.production -f docker-compose.production.yml pull && IMAGE_PREFIX=ghcr.io/${owner}/terravanta IMAGE_TAG=${GITHUB_SHA} docker compose --env-file .env.production -f docker-compose.production.yml up -d --remove-orphans --wait --wait-timeout 300"

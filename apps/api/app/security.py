@@ -143,7 +143,7 @@ def user_roles(db: Session, user: User) -> set[str]:
 
 def user_role(db: Session, user: User) -> str:
     roles = user_roles(db, user)
-    for role in ("platform_admin", "farmer", "veterinarian", "cooperative_admin"):
+    for role in ("platform_admin", "farmer", "veterinarian", "cooperative_admin", "processor_admin"):
         if role in roles:
             return role
     return "unassigned"
