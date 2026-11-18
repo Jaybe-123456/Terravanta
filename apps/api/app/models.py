@@ -572,6 +572,7 @@ class ReceivableCase(Base):
         ForeignKeyConstraint(["relationship_id", "organization_id"], ["counterparty_relationships.id", "counterparty_relationships.organization_id"], name="fk_receivable_case_relationship_org"),
         ForeignKeyConstraint(["contract_id", "organization_id"], ["supply_contracts.id", "supply_contracts.organization_id"], name="fk_receivable_case_contract_org"),
         UniqueConstraint("organization_id", "source_reference", name="uq_receivable_case_org_source_ref"),
+        UniqueConstraint("id", "organization_id", name="uq_receivable_case_id_org"),
         UniqueConstraint("id", "organization_id", "counterparty_organization_id", name="uq_receivable_case_id_org_counterparty"),
         CheckConstraint("asserted_amount >= 0", name="ck_receivable_case_asserted_amount_nonnegative"),
         CheckConstraint("period_end IS NULL OR period_start IS NULL OR period_end >= period_start", name="ck_receivable_case_period_dates"),
