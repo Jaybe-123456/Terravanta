@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, Eye, EyeOff, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
@@ -28,6 +28,11 @@ function dateInput(daysAgo = 0) {
 
 function Field({ label, name, type = "text", required = true, placeholder = "", min, max, step, minLength, maxLength, defaultValue, autoComplete }: { label: string; name: string; type?: string; required?: boolean; placeholder?: string; min?: string; max?: string; step?: string; minLength?: number; maxLength?: number; defaultValue?: string; autoComplete?: string }) {
   return <label className="field"><span>{label}</span><input name={name} type={type} required={required} placeholder={placeholder} min={min} max={max} step={step} minLength={minLength} maxLength={maxLength} defaultValue={defaultValue} autoComplete={autoComplete} /></label>;
+}
+
+function PasswordField({ label, name, autoComplete = "new-password", minLength = 8 }: { label: string; name: string; autoComplete?: string; minLength?: number }) {
+  const [visible, setVisible] = useState(false);
+  return <div className="field auth-password-field"><label htmlFor={`auth-${name}`}>{label}</label><span className="auth-password-control"><input id={`auth-${name}`} name={name} type={visible ? "text" : "password"} required minLength={minLength} autoComplete={autoComplete} /><button className="auth-password-toggle" type="button" aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`} aria-pressed={visible} onClick={() => setVisible((value) => !value)}>{visible ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}<span>{visible ? "Hide" : "Show"}</span></button></span></div>;
 }
 
 function SelectField({ label, name, options, required = true }: { label: string; name: string; options: Array<{ label: string; value: string }>; required?: boolean }) {
@@ -247,12 +252,20 @@ export default function Home() {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const password = String(values.get("password") || "");
+    if (password !== String(values.get("confirm_password") || "")) {
+      setAuthError("The passwords do not match. Check both fields and try again.");
+      setAuthMessage("");
+      const confirmation = form.elements.namedItem("confirm_password");
+      if (confirmation instanceof HTMLInputElement) confirmation.focus();
+      return;
+    }
     setAuthBusy(true); setAuthError(""); setAuthMessage("");
     try {
-      const session = await signUpSupabase(String(values.get("full_name") || "").trim(), String(values.get("email") || "").trim(), String(values.get("password") || ""));
+      const session = await signUpSupabase(String(values.get("full_name") || "").trim(), String(values.get("email") || "").trim(), password);
       if (!session) {
         form.reset();
-        setAuthMessage("Check your email for a confirmation link. After confirming, return here to sign in.");
+        setAuthMessage("Signup request accepted. If this email address is eligible, Supabase sends a confirmation link. Check your inbox and spam folder; after confirming, return here to sign in.");
         return;
       }
       await persistSession(session);
@@ -542,8 +555,9 @@ function SignInScreen({ demoMode, passwordRecovery, busy, error, message, onSubm
       <form className="auth-form" onSubmit={submit}>
         {registering && !recovering && !resetMode ? <Field label="Full name" name="full_name" autoComplete="name" minLength={2} /> : null}
         {!resetMode ? <Field label="Email address" name="email" type="email" autoComplete="email" /> : null}
-        {!recovering && !resetMode ? <Field label="Password" name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} minLength={8} /> : null}
-        {resetMode ? <><Field label="New password" name="new_password" type="password" autoComplete="new-password" minLength={8} /><Field label="Confirm new password" name="confirm_password" type="password" autoComplete="new-password" minLength={8} /></> : null}
+        {!recovering && !resetMode ? <PasswordField label="Password" name="password" autoComplete={registering ? "new-password" : "current-password"} minLength={8} /> : null}
+        {registering && !recovering && !resetMode ? <PasswordField label="Confirm password" name="confirm_password" autoComplete="new-password" minLength={8} /> : null}
+        {resetMode ? <><PasswordField label="New password" name="new_password" /><PasswordField label="Confirm new password" name="confirm_password" /></> : null}
         <button className="button button-primary" disabled={busy || !SUPABASE_CONFIGURED}>{busy ? resetMode ? "Updating password…" : recovering ? "Requesting link…" : registering ? "Creating account…" : "Signing in…" : resetMode ? "Update password" : recovering ? "Send reset link" : registering ? "Create farmer account" : "Sign in securely"}</button>
       </form>
       {resetMode ? <button type="button" className="auth-mode-toggle" disabled={busy} onClick={onExitRecovery}>Return to sign in</button> : recovering ? <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRecovering(false)}>Return to sign in</button> : <>
