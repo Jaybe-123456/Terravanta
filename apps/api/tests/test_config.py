@@ -1,4 +1,5 @@
 from app.config import Settings
+from app.main import app
 
 
 def test_public_app_origin_is_allowed_without_opening_vercel_previews():
@@ -40,7 +41,7 @@ def test_development_does_not_allow_production_origin_by_default():
 
 def test_vercel_production_origin_passes_api_preflight(client):
     response = client.options(
-        "/api/v1/auth/request-access-code",
+        "/api/v1/auth/onboard",
         headers={
             "Origin": "https://terravanta-five.vercel.app",
             "Access-Control-Request-Method": "POST",
@@ -50,3 +51,10 @@ def test_vercel_production_origin_passes_api_preflight(client):
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://terravanta-five.vercel.app"
+
+
+def test_email_code_auth_routes_are_removed_from_public_api():
+    paths = app.openapi()["paths"]
+    assert "/api/v1/auth/request-access-code" not in paths
+    assert "/api/v1/auth/access-code-login" not in paths
+    assert "/api/v1/auth/onboard" in paths

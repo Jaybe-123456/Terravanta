@@ -27,7 +27,7 @@ def upgrade():
             "evidence_artifacts", "source_mapping_profiles", "counterparty_relationships", "supply_contracts",
             "receivable_cases", "receivable_case_lines", "receivable_evidence_links",
             "counterparty_confirmations", "cash_receipts", "cash_allocations", "receivable_case_events",
-            "receivables_pilot_decisions",
+            "receivables_pilot_decisions", "supabase_identity_links",
         }
     ]
     Base.metadata.create_all(bind=bind, tables=initial_tables)

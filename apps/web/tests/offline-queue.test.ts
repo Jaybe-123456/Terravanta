@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import "fake-indexeddb/auto";
-import { flushOfflineQueue, writeApi } from "../lib/api";
+import { flushOfflineQueue, resolveAuthMode, writeApi } from "../lib/api";
 import { enqueue, readQueue, removeQueued } from "../lib/offline-queue";
+
+test("production frontend builds always use Supabase Auth", () => {
+  assert.equal(resolveAuthMode("demo", "production"), "supabase");
+  assert.equal(resolveAuthMode("demo", "development"), "demo");
+  assert.equal(resolveAuthMode("supabase", "development"), "supabase");
+});
 
 test("offline record is saved locally and replayed after reconnect", async () => {
   const windowEvents = new EventTarget();

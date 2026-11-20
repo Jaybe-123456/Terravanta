@@ -15,11 +15,13 @@
 - Rule-based alerts, AI provider abstraction, opt-in NVIDIA veterinary draft workflow, local PDF text extraction, configurable Nemotron Parse NIM image parsing and review-only structured document drafts.
 - Offline POST queue for one browser, scoped to the current user; the API remains the source of truth after synchronization.
 - SQLAlchemy UUID schema, Alembic initial migration, PostGIS point geometry, synthetic demo seed, Docker Compose, OpenAPI docs and workflow tests.
+- Alembic revision `0008_tenant_rls` adds a restricted PostgreSQL app role, request-scoped tenant context, explicit table grants and RLS policies for farms, clinical records, consented deliveries, cooperative settlement and processor claims. CI includes a PostgreSQL smoke check for cross-farm isolation and the narrow consent projection. The API uses a separate migration/operator owner URL. This security boundary is newly implemented and still requires staging permission-matrix validation before use with live records.
 
 ## Not production complete
 
 - The supplied project is a functional MVP, not a launched service or validated clinical product. The included Kiambu farm and all associated organizations, people, events, and deliveries are synthetic.
 - Real farmer self-registration and first-login provisioning are implemented but have not been connected to a configured Terravanta Supabase project in this workspace. Live signup, email confirmation and token rotation still need an end-to-end run with project credentials.
+- The Render production database must be given the restricted runtime login and role membership before migration `0008_tenant_rls` is deployed. No production database migration or deploy was run by this workspace session.
 - Veterinarian and cooperative accounts still require an operator to send a Supabase Auth invitation and run the private provisioning CLI. A self-service invitation portal, role administration UI, recovery operations and abuse controls remain to be built; users cannot self-assign those roles.
 - Session refresh tokens use an HttpOnly, SameSite cookie and access tokens remain in memory. Complete a security review for reverse-proxy deployments, CSRF, session revocation and XSS before production launch.
 - User-scoped offline queue prevents one account from replaying another account's queued writes. It is not encrypted, does not support conflict resolution or multi-device merge, and only queues POST records. Historical unscoped queue entries should be reviewed/cleared during upgrade.

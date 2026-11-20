@@ -23,7 +23,8 @@ flowchart LR
   Web --> Auth[Supabase Auth by default<br/>synthetic role login only when explicitly enabled]
   API -->|JWT validation| Auth
   API --> Access[Role + farm/org membership + consent checks]
-  Access --> DB[(PostgreSQL + PostGIS)]
+  Access -->|transaction-local role + user context| RLS[PostgreSQL row-level security]
+  RLS --> DB[(PostgreSQL + PostGIS)]
   API -->|run + row + reviewer audit| Graph[Farm → production → lot → delivery → intake trace]
   Graph --> DB
   API --> AI[AI provider abstraction]
@@ -36,8 +37,9 @@ flowchart LR
 ## Application and data boundaries
 
 - The API is the source of truth. Every protected operation authenticates the user, checks server-side role and farm/organization membership, validates UUIDs and payloads, and audits sensitive changes. A cooperative request is filtered by active, non-expired consent and `delivery_summary` scope on every call.
+- PostgreSQL RLS is a second boundary beneath FastAPI. Each authenticated request uses a restricted `terravanta_runtime` login, assumes the non-login `terravanta_app` role inside each transaction, and binds the verified Supabase user UUID through a transaction-local setting. The role is not the table owner and cannot bypass RLS. Alembic and the private operator CLI use the separate owner connection.
 - Farmer-created farm, crop, feed, health, production and delivery records are attributed to their source. A veterinarian can verify a health event only on an assigned farm. Verification records the veterinarian; AI output is stored separately and never signs or edits that record.
-- The cooperative portal returns the permitted delivery summary, the synthetic/source indicator, and a missing-reference prompt derived from those shared fields. Veterinary, animal-level and quality/lab records are not included in that scope.
+- The cooperative portal returns the permitted delivery summary, the synthetic/source indicator, and a missing-reference prompt derived from those shared fields. A narrow database projection supplies farm name/code; delivery-summary consent does not authorize general farm, animal, clinical, crop, location or laboratory reads.
 - Cooperative reconciliation accepts a bounded UTF-8 CSV, matches only farm-consented same-date milk deliveries in litres, persists every row status, and routes uncertain rows to an assigned cooperative reviewer. Each read re-checks consent before returning farm/lot/delivery graph nodes. Confirming an exception records a cooperative decision; it does not edit a farm's source record or authorize payment.
 - Cooperative settlement close accepts three bounded CSV exports, normalizes exact member codes, compares period milk volume, processor gross/deductions/net arithmetic and payout values using decimal arithmetic, and persists fixed-precision amounts plus source hashes, row provenance and references. Exceptions require a named reviewer note; close approval requires a named cooperative user and an approval note. The statement-pack CSV is gated on approval and contains imported values; no endpoint sends a payment, edits a source ledger or declares funds paid.
 - Cooperative settlement close is the **member-payable** workflow: it compares cooperative collection, processor settlement and member payout exports. It does not prove the processor's **seller-side receivable**. The receivables assurance domain is kept separate so member liabilities cannot be confused with processor obligations.
@@ -47,7 +49,7 @@ flowchart LR
 - Supabase JWTs are validated against the project's JWKS and issuer/audience. When a project uses legacy shared-secret signing, the API validates the bearer token with the Supabase Auth user endpoint. Before onboarding, the API also checks the provider's current user profile and confirmed-email timestamp. A first confirmed farmer session provisions a farmer-only Terravanta user row; cooperative and processor roles are operator-assigned. Roles and memberships are held in the application database.
 - Pilot veterinarian/cooperative/processor accounts are provisioned with the private `python -m app.operator` CLI after a Supabase Auth invitation. The command cannot assign platform-admin access and is not reachable over HTTP. Cooperative delivery sharing may target a verified cooperative account email while a cooperative directory is being onboarded.
 - Synthetic records and demo login are off by default and require `ENABLE_SYNTHETIC_DATA=true`; they cannot be enabled in production.
-- Supabase refresh tokens are stored in an HttpOnly, SameSite cookie by a same-origin Next.js Route Handler. The browser keeps the short-lived access token in memory and sends it to FastAPI as a bearer token. Production still needs a CSRF/XSS/session-revocation review.
+- Supabase refresh tokens are stored in an HttpOnly, SameSite cookie by a same-origin Next.js Route Handler. The browser keeps the short-lived access token in memory and sends it to FastAPI as a bearer token. The email-code sign-in path is removed. Production still needs a CSRF/XSS/session-revocation review and staging validation of all RLS roles.
 - The offline queue records an owner ID and only replays records for the current browser account. It does not encrypt data, resolve concurrent edits, support multi-device merge, or queue every HTTP method.
 
 ## AI provider and evidence flow

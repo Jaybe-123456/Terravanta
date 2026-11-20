@@ -19,7 +19,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import get_db
 from .evidence_storage import delete_private, get_private, put_private, safe_key, storage_ready
 from .models import (
     AuditLog, CashAllocation, CashReceipt, CounterpartyConfirmation, CounterpartyRelationship,
@@ -29,7 +28,7 @@ from .models import (
 from .receivables_schemas import (
     AllocationCreate, CaseCreate, CounterpartyResponseCreate, PilotDecisionCreate, ReceiptCreate, RelationshipCreate,
 )
-from .security import current_user, require_role
+from .security import current_user, get_scoped_db, require_role
 
 log = logging.getLogger("terravanta.receivables")
 router = APIRouter(prefix="/api/v1", tags=["receivables"])
@@ -272,7 +271,7 @@ def _csv_text(rows: list[dict]) -> str:
 
 
 @router.get("/cooperative/receivables/summary")
-def seller_summary(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def seller_summary(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
     cases = db.query(ReceivableCase).filter_by(organization_id=org.id).all()
     buckets: dict[str, int] = {}
@@ -318,7 +317,7 @@ def seller_summary(user: User = Depends(current_user), db: Session = Depends(get
 
 
 @router.get("/cooperative/receivables/relationships")
-def seller_relationships(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def seller_relationships(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
     rows = db.query(CounterpartyRelationship).filter_by(organization_id=org.id).order_by(CounterpartyRelationship.counterparty_name).all()
     return [{"id": str(r.id), "counterparty_name": r.counterparty_name, "relationship_type": r.relationship_type,
@@ -327,7 +326,7 @@ def seller_relationships(user: User = Depends(current_user), db: Session = Depen
 
 
 @router.post("/cooperative/receivables/relationships", status_code=201)
-def create_relationship(body: RelationshipCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_relationship(body: RelationshipCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
     counterparty = db.get(Organization, body.counterparty_organization_id) if body.counterparty_organization_id else None
     if body.counterparty_organization_id and not counterparty:
@@ -352,14 +351,14 @@ def create_relationship(body: RelationshipCreate, user: User = Depends(current_u
 
 
 @router.get("/cooperative/receivables/cases")
-def seller_cases(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def seller_cases(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
     rows = db.query(ReceivableCase).filter_by(organization_id=org.id).order_by(ReceivableCase.created_at.desc()).all()
     return [_case_json(db, row) for row in rows]
 
 
 @router.post("/cooperative/receivables/cases", status_code=201)
-def create_case(body: CaseCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_case(body: CaseCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
     relation = db.query(CounterpartyRelationship).filter_by(id=body.relationship_id, organization_id=org.id).first()
     if not relation:
@@ -419,7 +418,7 @@ def create_case(body: CaseCreate, user: User = Depends(current_user), db: Sessio
 
 
 @router.get("/cooperative/receivables/cases/{case_id}")
-def seller_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def seller_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     return _case_with_events(db, _seller_case(db, user, case_id))
 
 
@@ -429,7 +428,7 @@ async def upload_case_evidence(
     file: UploadFile = File(...),
     artifact_type: str = Form("processor_statement"),
     source_reference: str = Form(""),
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
 ):
     case = _seller_case(db, user, case_id)
     if case.status in {"paid", "closed"}:
@@ -488,7 +487,7 @@ async def upload_case_evidence(
 
 
 @router.post("/cooperative/receivables/cases/{case_id}/assert")
-def assert_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def assert_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     case = _seller_case(db, user, case_id)
     if case.status != "draft":
         raise HTTPException(409, "Only a draft claim can be asserted")
@@ -502,7 +501,7 @@ def assert_case(case_id: UUID, user: User = Depends(current_user), db: Session =
 
 
 @router.post("/cooperative/receivables/cases/{case_id}/submit")
-def submit_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def submit_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     case = _seller_case(db, user, case_id)
     if case.status != "asserted":
         raise HTTPException(409, "Assert the claim before submitting it to the processor")
@@ -519,7 +518,7 @@ def submit_case(case_id: UUID, user: User = Depends(current_user), db: Session =
 
 
 @router.get("/processor/receivables/cases")
-def processor_cases(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def processor_cases(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _processor_org(db, user)
     rows = db.query(ReceivableCase).filter(
         ReceivableCase.counterparty_organization_id == org.id,
@@ -529,12 +528,12 @@ def processor_cases(user: User = Depends(current_user), db: Session = Depends(ge
 
 
 @router.get("/processor/receivables/cases/{case_id}")
-def processor_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def processor_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     return _case_with_events(db, _processor_case(db, user, case_id))
 
 
 @router.post("/processor/receivables/cases/{case_id}/responses", status_code=201)
-def respond_to_case(case_id: UUID, body: CounterpartyResponseCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def respond_to_case(case_id: UUID, body: CounterpartyResponseCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     case = _processor_case(db, user, case_id)
     if case.status in {"paid", "closed"}:
         raise HTTPException(409, "This claim is paid or closed and no longer accepts processor responses")
@@ -575,7 +574,7 @@ def respond_to_case(case_id: UUID, body: CounterpartyResponseCreate, user: User 
 
 
 @router.post("/cooperative/receivables/cases/{case_id}/receipts", status_code=201)
-def record_receipt(case_id: UUID, body: ReceiptCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def record_receipt(case_id: UUID, body: ReceiptCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization = _seller_org(db, user)
     case = db.query(ReceivableCase).filter_by(id=case_id, organization_id=organization.id).with_for_update().first()
     if not case:
@@ -628,7 +627,7 @@ def record_receipt(case_id: UUID, body: ReceiptCreate, user: User = Depends(curr
 
 
 @router.post("/cooperative/receivables/cases/{case_id}/allocations", status_code=201)
-def allocate_receipt(case_id: UUID, body: AllocationCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def allocate_receipt(case_id: UUID, body: AllocationCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization = _seller_org(db, user)
     case = db.query(ReceivableCase).filter_by(id=case_id, organization_id=organization.id).with_for_update().first()
     if not case:
@@ -662,7 +661,7 @@ def allocate_receipt(case_id: UUID, body: AllocationCreate, user: User = Depends
 
 
 @router.post("/cooperative/receivables/cases/{case_id}/pilot-decisions", status_code=201)
-def record_pilot_decision(case_id: UUID, body: PilotDecisionCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def record_pilot_decision(case_id: UUID, body: PilotDecisionCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     case = _seller_case(db, user, case_id)
     if not db.query(CounterpartyConfirmation.id).filter_by(case_id=case.id, organization_id=case.organization_id).first():
         raise HTTPException(409, "Record the processor's response before evaluating a paid repeat")
@@ -691,7 +690,7 @@ def record_pilot_decision(case_id: UUID, body: PilotDecisionCreate, user: User =
 
 
 @router.get("/receivables/cases/{case_id}/evidence/{artifact_id}")
-def download_evidence(case_id: UUID, artifact_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def download_evidence(case_id: UUID, artifact_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     try:
         case = _seller_case(db, user, case_id)
         org_id = case.organization_id
@@ -710,7 +709,7 @@ def download_evidence(case_id: UUID, artifact_id: UUID, user: User = Depends(cur
 
 
 @router.get("/cooperative/receivables/cases/{case_id}/evidence-export")
-def evidence_export(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def evidence_export(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     case = _seller_case(db, user, case_id)
     data = _case_with_events(db, case)
     artifacts = []

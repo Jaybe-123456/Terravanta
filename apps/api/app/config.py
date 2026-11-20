@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     app_name: str = "Terravanta API"
     app_env: str = "development"
     database_url: str = "sqlite:///./terrava.db"
+    migrations_database_url: str = ""
     cors_origins: str = "http://localhost:3000"
     # Stable public Vercel production URL. Keep preview deployments out of this allowlist.
     public_app_origin: str = "https://terravanta-five.vercel.app"
@@ -14,9 +15,6 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_jwks_url: str = ""
     supabase_anon_key: str = ""
-    temp_access_auth_enabled: bool = False
-    resend_api_key: str = ""
-    access_code_from_email: str = ""
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_chat_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
@@ -35,7 +33,7 @@ class Settings(BaseSettings):
     ai_timeout_seconds: int = 35
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
 
-    @field_validator("database_url", mode="before")
+    @field_validator("database_url", "migrations_database_url", mode="before")
     @classmethod
     def normalize_postgres_driver(cls, value):
         # Managed PostgreSQL providers commonly expose postgresql:// URLs.
@@ -65,11 +63,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def require_production_auth_configuration(self):
         if self.app_env.lower() == "production":
-            if len(self.demo_auth_secret) < 32 or self.demo_auth_secret == "local-demo-only-change-me":
-                raise ValueError("Production requires a unique DEMO_AUTH_SECRET of at least 32 characters")
             has_supabase = bool(self.supabase_url and self.supabase_anon_key)
-            if not has_supabase and not self.temp_access_auth_enabled:
-                raise ValueError("Production requires Supabase Auth or explicitly enabled temporary access-code auth")
+            if not has_supabase:
+                raise ValueError("Production requires Supabase Auth configuration")
+            if not self.database_url.startswith("postgresql+"):
+                raise ValueError("Production requires DATABASE_URL to use the restricted PostgreSQL runtime role")
+            if not self.migrations_database_url:
+                raise ValueError("Production requires MIGRATIONS_DATABASE_URL for schema and operator tasks")
             if "*" in self.allowed_origins:
                 raise ValueError("Production CORS_ORIGINS must list explicit origins")
             if self.enable_synthetic_data:

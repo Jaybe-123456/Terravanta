@@ -10,7 +10,7 @@ The product has three role-specific workspaces:
 - **Cooperative receivables:** create seller-asserted processor claims, attach source records, track reviewed-date aging, record receipts and export an evidence pack.
 - **Processor administrator:** review only claims sent to the processor organization and record an accept, partial, dispute, reject or information-request response.
 
-See [architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
+See [core platform architecture, auth, RLS and API boundaries](docs/CORE_PLATFORM_ARCHITECTURE.md), [system architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
 
 To deploy the public API and managed PostGIS database on Render, use the [Render deployment guide](docs/RENDER_DEPLOYMENT.md) and the checked-in `render.yaml` Blueprint.
 
@@ -24,7 +24,7 @@ Prerequisites: Docker Desktop with the Linux container engine, Node/Python are n
 Copy-Item .env.example .env
 ```
 
-Edit `.env`. Set unique local values for `POSTGRES_PASSWORD` and `DEMO_AUTH_SECRET`, then configure a **dedicated Terravanta Supabase project**: set `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Leave `SUPABASE_JWKS_URL` blank to derive the standard endpoint. In Supabase Auth URL Configuration, allow `http://localhost:3001` as a redirect URL. Do not point Terravanta at VetIOS' Supabase project.
+Edit `.env`. Set a unique local value for `POSTGRES_PASSWORD`, then configure a **dedicated Terravanta Supabase project**: set `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Leave `SUPABASE_JWKS_URL` blank to derive the standard endpoint. In Supabase Auth URL Configuration, allow `http://localhost:3001` as a redirect URL. Do not point Terravanta at VetIOS' Supabase project. `DEMO_AUTH_SECRET` is only used if you intentionally enable the synthetic local demo.
 
 Start the services from the repository root:
 
@@ -81,9 +81,9 @@ docker compose down --volumes
 
 ## Real account onboarding
 
-Email/password sign-up and sign-in use Supabase Auth. Enable email confirmation in the Supabase project and add the local app URL to the project's redirect allowlist. After sign-in, the API validates the JWT and checks the provider's current user profile and confirmed-email timestamp before creating a Terravanta farmer profile with the `farmer` role. It ignores role claims from user metadata. A new farmer has no farm membership until they register a farm. Existing veterinarian/cooperative accounts retain their server-assigned roles.
+Email/password sign-up and sign-in use Supabase Auth. The Terravanta email-code sign-in API has been removed. Enable email confirmation in the Supabase project and add the local and production app URLs to the project's redirect allowlist. After sign-in, the API validates the JWT and checks the provider's current user profile and confirmed-email timestamp before provisioning a farmer profile with only the `farmer` role. Verified users matching an older farmer record are linked to the original internal user ID so their farm history remains intact. Role conflicts are held for operator review. The API ignores role claims from user metadata. A new farmer has no farm membership until they register a farm. Existing veterinarian/cooperative accounts retain their server-assigned roles.
 
-The Supabase URL and publishable anon key are public client settings. The backend uses the same anon key only to validate tokens when the Supabase project has legacy shared-secret signing; otherwise it validates against the project's JWKS. **Never put a Supabase service-role key in frontend variables or this repository.** Refresh tokens are kept in an HttpOnly cookie; access tokens remain in memory. Demo login and seed records are off by default. To explicitly enable the fictional demo, set both `NEXT_PUBLIC_AUTH_MODE=demo` and `ENABLE_SYNTHETIC_DATA=true`, then rebuild.
+The Supabase URL and publishable anon key are public client settings. The backend uses the same anon key only to validate tokens when the Supabase project has legacy shared-secret signing; otherwise it validates against the project's JWKS. **Never put a Supabase service-role key in frontend variables or this repository.** Refresh tokens are kept in an HttpOnly cookie; access tokens remain in memory. Demo login and seed records are off by default. To explicitly enable the fictional demo in a local Next.js development server, set both `NEXT_PUBLIC_AUTH_MODE=demo` and `ENABLE_SYNTHETIC_DATA=true`. Production builds always use Supabase Auth, even if a stale Vercel variable says `demo`.
 
 ## NVIDIA configuration
 
@@ -95,16 +95,17 @@ No NVIDIA call is fabricated when credentials or endpoints are missing. Do not s
 
 ## Run without Docker
 
-Use Python 3.12+ and Node.js 22+.
+Use `uv` with Python 3.12 and Node.js 22+.
 
 ```powershell
 # terminal 1 — API
 cd apps/api
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-dev.txt
+uv sync --locked
+$env:APP_ENV = "development"
 $env:DATABASE_URL = "sqlite:///./terravanta.db"
-uvicorn app.main:app --reload --port 8000
+uv run fastapi dev
+# If Windows Application Control blocks fastapi.exe:
+# .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 
 # terminal 2 — frontend
 cd apps/web
@@ -119,8 +120,8 @@ The API creates local SQLite tables on first startup and does not seed records b
 From `apps/api`:
 
 ```powershell
-pip install -r requirements-dev.txt
-pytest -q
+uv sync --locked
+uv run pytest -q
 ```
 
 From `apps/web`:

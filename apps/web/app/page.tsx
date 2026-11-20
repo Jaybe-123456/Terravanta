@@ -6,7 +6,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } f
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
 import { ReceivablesDesk } from "@/components/receivables-desk";
-import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginAccessCode, loginDemo, loginSupabase, logoutSupabase, persistSession, requestAccessCode as requestEmailCode, restoreSession, signUpSupabase, uploadDocument, writeApi } from "@/lib/api";
+import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginDemo, loginSupabase, logoutSupabase, persistSession, requestSupabasePasswordReset, restoreSession, signUpSupabase, updateSupabasePassword, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
 type AnyRecord = Record<string, any>;
@@ -80,9 +80,9 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [currentUserName, setCurrentUserName] = useState("");
   const demoMode = AUTH_MODE === "demo";
-  const accessCodeMode = AUTH_MODE === "access_code";
 
   const refreshQueue = useCallback(async () => {
     if (!token) return;
@@ -167,19 +167,14 @@ export default function Home() {
     let cancelled = false;
     const start = async () => {
       try {
-        let session = !demoMode ? await consumeSupabaseRedirect() : null;
+        const redirect = !demoMode ? await consumeSupabaseRedirect() : null;
+        if (redirect?.passwordRecovery) {
+          if (!cancelled) { setPasswordRecovery(true); setLoading(false); }
+          return;
+        }
+        let session = redirect?.session || null;
         session = session || await restoreSession();
         if (session?.access_token) {
-          // Access-code login already returned this user's server-verified identity.
-          // Do not make the profile endpoint a startup dependency: the API applies
-          // authorization to every workspace request that follows.
-          if (accessCodeMode) {
-            if (cancelled) return;
-            setCurrentUserName(session.user.name);
-            setRole(session.user.role);
-            setToken(session.access_token);
-            return;
-          }
           const profile = await api<AnyRecord>("/api/v1/me", session.access_token);
           if (cancelled) return;
           session.user = { id: profile.id, name: profile.name, email: profile.email, role: profile.role };
@@ -201,7 +196,7 @@ export default function Home() {
     };
     void start();
     return () => { cancelled = true; };
-  }, [accessCodeMode, demoMode]);
+  }, [demoMode]);
 
   useEffect(() => { if (token) void loadWorkspace(token, role); }, [token, role, loadWorkspace]);
 
@@ -239,25 +234,12 @@ export default function Home() {
     const values = new FormData(event.currentTarget);
     setAuthBusy(true); setAuthError(""); setAuthMessage("");
     try {
-      const session = accessCodeMode
-        ? await loginAccessCode(String(values.get("name") || ""), String(values.get("email") || ""), String(values.get("access_code") || ""))
-        : await loginSupabase(String(values.get("email") || ""), String(values.get("password") || ""));
+      const session = await loginSupabase(String(values.get("email") || ""), String(values.get("password") || ""));
       await persistSession(session);
       setCurrentUserName(session.user.name);
       setRole(session.user.role); setToken(session.access_token); setActive("overview");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Sign-in failed.");
-    } finally { setAuthBusy(false); }
-  }
-
-  async function requestSignInCode(name: string, email: string) {
-    setAuthBusy(true); setAuthError(""); setAuthMessage("");
-    try {
-      setAuthMessage(await requestEmailCode(name, email));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not send a verification code.";
-      setAuthError(message);
-      throw error;
     } finally { setAuthBusy(false); }
   }
 
@@ -279,6 +261,42 @@ export default function Home() {
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Account creation failed.");
     } finally { setAuthBusy(false); }
+  }
+
+  async function requestPasswordReset(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    setAuthBusy(true); setAuthError(""); setAuthMessage("");
+    try {
+      await requestSupabasePasswordReset(String(values.get("email") || "").trim());
+      setAuthMessage("If that address has a Terravanta account, Supabase has sent a password-reset link.");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Could not request a password reset.");
+    } finally { setAuthBusy(false); }
+  }
+
+  async function resetPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const password = String(values.get("new_password") || "");
+    if (password !== String(values.get("confirm_password") || "")) {
+      setAuthError("The passwords do not match.");
+      return;
+    }
+    setAuthBusy(true); setAuthError(""); setAuthMessage("");
+    try {
+      const session = await updateSupabasePassword(password);
+      await persistSession(session);
+      setCurrentUserName(session.user.name); setRole(session.user.role); setToken(session.access_token);
+      setPasswordRecovery(false); setActive("overview");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Could not update your password.");
+    } finally { setAuthBusy(false); }
+  }
+
+  async function exitPasswordRecovery() {
+    await clearSession();
+    setPasswordRecovery(false); setAuthError(""); setAuthMessage("");
   }
 
   async function signOut() {
@@ -477,7 +495,7 @@ export default function Home() {
     : role === "veterinarian" ? vetQueue.filter((item) => !item.verified).length : 0;
 
   if (loading && !token) return <main className="boot-screen"><span className="boot-mark"><Leaf size={25} /></span><LoaderCircle className="spinner" size={20} /><p>Opening Terravanta workspace…</p></main>;
-  if (!token) return <SignInScreen demoMode={demoMode} accessCodeMode={accessCodeMode} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRequestCode={requestSignInCode} onRegister={registerFarmer} onDemo={switchRole} />;
+  if (!token) return <SignInScreen demoMode={demoMode} passwordRecovery={passwordRecovery} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onForgot={requestPasswordReset} onReset={resetPassword} onExitRecovery={exitPasswordRecovery} onDemo={switchRole} />;
 
   return <div className="app-shell">
     <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Cooperative workspace" : isProcessor ? "Processor AP workspace" : farmLabel} location={isCoop ? "Cooperative organization" : isProcessor ? "Supplier claims" : `${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} workCount={workCount} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
@@ -510,51 +528,30 @@ export default function Home() {
   </div>;
 }
 
-function SignInScreen({ demoMode, accessCodeMode, busy, error, message, onSubmit, onRequestCode, onRegister, onDemo }: { demoMode: boolean; accessCodeMode: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRequestCode: (name: string, email: string) => Promise<void>; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onDemo: (role: string) => void }) {
+function SignInScreen({ demoMode, passwordRecovery, busy, error, message, onSubmit, onRegister, onForgot, onReset, onExitRecovery, onDemo }: { demoMode: boolean; passwordRecovery: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onForgot: (event: React.FormEvent<HTMLFormElement>) => void; onReset: (event: React.FormEvent<HTMLFormElement>) => void; onExitRecovery: () => void; onDemo: (role: string) => void }) {
   const [registering, setRegistering] = useState(false);
-  const [codeSentTo, setCodeSentTo] = useState<{ name: string; email: string } | null>(null);
-  async function requestCode(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    const name = String(values.get("name") || "").trim();
-    const email = String(values.get("email") || "").trim();
-    try { await onRequestCode(name, email); setCodeSentTo({ name, email }); } catch { /* the parent displays the delivery error */ }
-  }
-  async function resendCode() {
-    if (!codeSentTo) return;
-    try { await onRequestCode(codeSentTo.name, codeSentTo.email); } catch { /* the parent displays the delivery error */ }
-  }
-  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{demoMode ? "Open the farm workspace" : accessCodeMode ? codeSentTo ? "Enter your email code" : "Get a sign-in code" : registering ? "Create a farmer account" : "Sign in to Terravanta"}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
-    {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : accessCodeMode ? <>
-      {error ? <div className="auth-error" role="alert">{error}</div> : null}
-      {!codeSentTo ? <form className="auth-form" onSubmit={requestCode}>
-        <Field label="Full name" name="name" autoComplete="name" minLength={2} />
-        <Field label="Email address" name="email" type="email" autoComplete="email" />
-        <button className="button button-primary" disabled={busy}>{busy ? "Sending your code…" : "Generate access code"}</button>
-      </form> : <>
-        <p className="auth-info" role="status">{message || `If these details can be registered, a code has been sent to ${codeSentTo.email}. It expires in 10 minutes.`}</p>
-        <form className="auth-form" onSubmit={onSubmit}>
-          <input type="hidden" name="name" value={codeSentTo.name} />
-          <input type="hidden" name="email" value={codeSentTo.email} />
-          <Field label="8-digit email code" name="access_code" autoComplete="one-time-code" minLength={8} maxLength={8} />
-          <button className="button button-primary" disabled={busy}>{busy ? "Verifying code…" : "Verify and continue"}</button>
-        </form>
-        <div className="auth-code-actions"><button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => void resendCode()}>Resend code</button><button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => { setCodeSentTo(null); }}>Change name or email</button></div>
-      </>}
-      <small className="auth-footnote">We email an 8-digit one-time code to verify the address. It expires after 10 minutes and can be used once.</small>
-    </> : <>
+  const [recovering, setRecovering] = useState(false);
+  const resetMode = passwordRecovery && !demoMode;
+  const submit = resetMode ? onReset : recovering ? onForgot : registering ? onRegister : onSubmit;
+  const title = demoMode ? "Open the farm workspace" : resetMode ? "Choose a new password" : recovering ? "Reset your password" : registering ? "Create a farmer account" : "Sign in to Terravanta";
+  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{title}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
+    {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : <>
       {!SUPABASE_CONFIGURED ? <div className="auth-error" role="alert">Supabase Auth is not configured. Add your project URL and publishable anon key to `.env`, then rebuild the web service.</div> : null}
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
       {message ? <div className="auth-info" role="status">{message}</div> : null}
-      <form className="auth-form" onSubmit={registering ? onRegister : onSubmit}>
-        {registering ? <Field label="Full name" name="full_name" autoComplete="name" minLength={2} /> : null}
-        <Field label="Email address" name="email" type="email" autoComplete="email" />
-        <Field label="Password" name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} minLength={8} />
-        <button className="button button-primary" disabled={busy || !SUPABASE_CONFIGURED}>{busy ? registering ? "Creating account…" : "Signing in…" : registering ? "Create farmer account" : "Sign in securely"}</button>
+      <form className="auth-form" onSubmit={submit}>
+        {registering && !recovering && !resetMode ? <Field label="Full name" name="full_name" autoComplete="name" minLength={2} /> : null}
+        {!resetMode ? <Field label="Email address" name="email" type="email" autoComplete="email" /> : null}
+        {!recovering && !resetMode ? <Field label="Password" name="password" type="password" autoComplete={registering ? "new-password" : "current-password"} minLength={8} /> : null}
+        {resetMode ? <><Field label="New password" name="new_password" type="password" autoComplete="new-password" minLength={8} /><Field label="Confirm new password" name="confirm_password" type="password" autoComplete="new-password" minLength={8} /></> : null}
+        <button className="button button-primary" disabled={busy || !SUPABASE_CONFIGURED}>{busy ? resetMode ? "Updating password…" : recovering ? "Requesting link…" : registering ? "Creating account…" : "Signing in…" : resetMode ? "Update password" : recovering ? "Send reset link" : registering ? "Create farmer account" : "Sign in securely"}</button>
       </form>
-      <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRegistering((value) => !value)}>{registering ? "Already registered? Sign in" : "New farmer? Create an account"}</button>
-      <small className="auth-footnote">New accounts receive farmer access and start with an empty private workspace. Veterinarian and cooperative roles require a verified invitation.</small>
-    </>}</section><p className="auth-bottom">Farm-level data access is checked by the Terravanta API.</p></main>;
+      {resetMode ? <button type="button" className="auth-mode-toggle" disabled={busy} onClick={onExitRecovery}>Return to sign in</button> : recovering ? <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRecovering(false)}>Return to sign in</button> : <>
+        {!registering ? <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRecovering(true)}>Forgot password?</button> : null}
+        <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRegistering((value) => !value)}>{registering ? "Already registered? Sign in" : "New farmer? Create an account"}</button>
+      </>}
+      <small className="auth-footnote">Supabase manages sign-in, email confirmation, password recovery and sessions. New sign-ups start with farmer access; veterinarian, cooperative and processor workspaces require an assigned organization or farm role.</small>
+    </>}</section><p className="auth-bottom">Farm-level data access is checked by the Terravanta API and PostgreSQL policies.</p></main>;
 }
 
 function sectionTitle(section: Section, coop: boolean, role: string) {
@@ -748,7 +745,8 @@ function ReportsView({ dashboard, alerts, passport }: AnyRecord) {
 
 function SettingsView({ role, userName, farm, passport, online, queued }: AnyRecord) {
   const initials = String(userName || "TV").split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join("").toUpperCase();
-  return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : AUTH_MODE === "access_code" ? "Temporary access-code pilot" : "Supabase Auth"}</strong><small>Access roles are assigned by Terravanta. Farmer registration does not grant veterinarian or cooperative access.</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
+  const organizationAccessCopy = "This account has farmer access. Ask the Terravanta pilot operator to invite a verified Supabase identity and assign cooperative or processor organization membership. Keep farm-record ownership separate; role changes require operator review.";
+  return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
 }
 
 function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, activeClose, busy, importFile, openRun, reviewItem, createClose, openClose, reviewException, approveClose, downloadPack, onNavigate }: AnyRecord) {

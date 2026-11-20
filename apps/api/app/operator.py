@@ -10,15 +10,15 @@ from uuid import UUID
 
 from sqlalchemy import func
 
-from .db import SessionLocal
-from .models import AuditLog, Farm, FarmMember, Organization, OrganizationMember, User, UserRole
+from .db import AdminSessionLocal
+from .models import AuditLog, Farm, FarmMember, Organization, OrganizationMember, SupabaseIdentityLink, User, UserRole
 
 
 def create_cooperative(name: str) -> UUID:
     normalized_name = name.strip()
     if len(normalized_name) < 2 or len(normalized_name) > 180:
         raise ValueError("Cooperative name must be between 2 and 180 characters")
-    with SessionLocal() as db:
+    with AdminSessionLocal() as db:
         existing = db.query(Organization).filter(
             Organization.kind == "cooperative",
             func.lower(Organization.name) == normalized_name.lower(),
@@ -37,7 +37,7 @@ def create_processor(name: str) -> UUID:
     normalized_name = name.strip()
     if len(normalized_name) < 2 or len(normalized_name) > 180:
         raise ValueError("Processor name must be between 2 and 180 characters")
-    with SessionLocal() as db:
+    with AdminSessionLocal() as db:
         existing = db.query(Organization).filter(
             Organization.kind == "processor",
             func.lower(Organization.name) == normalized_name.lower(),
@@ -74,7 +74,7 @@ def provision_user(
     if role in {"cooperative_admin", "processor_admin"} and (organization_id is None or farm_id is not None):
         raise ValueError("An organization user must be assigned to one organization")
 
-    with SessionLocal() as db:
+    with AdminSessionLocal() as db:
         if role == "veterinarian" and not db.get(Farm, farm_id):
             raise ValueError("Farm not found; check the farm UUID before provisioning")
         if role in {"cooperative_admin", "processor_admin"}:
@@ -83,55 +83,65 @@ def provision_user(
             if not organization or organization.kind != expected_kind:
                 raise ValueError(f"{expected_kind.title()} organization not found; check its UUID before provisioning")
 
-        user = db.get(User, supabase_user_id)
+        identity_link = db.get(SupabaseIdentityLink, supabase_user_id)
+        user = db.get(User, identity_link.user_id) if identity_link else db.get(User, supabase_user_id)
         email_owner = db.query(User).filter(func.lower(User.email) == normalized_email).first()
-        if email_owner and email_owner.id != supabase_user_id:
-            raise ValueError("This email is already linked to a different Supabase identity")
+        if email_owner and user and email_owner.id != user.id:
+            raise ValueError("This email is already linked to a different Terravanta identity")
+        if not user and email_owner:
+            other_link = db.query(SupabaseIdentityLink).filter_by(user_id=email_owner.id).first()
+            if other_link:
+                raise ValueError("This email is already linked to a different Supabase identity")
+            user = email_owner
+            if user.id != supabase_user_id:
+                db.add(SupabaseIdentityLink(supabase_user_id=supabase_user_id, user_id=user.id))
         if user and user.email.lower() != normalized_email:
             raise ValueError("The Supabase identity is already linked to a different email")
 
-        assigned_roles = {row.role for row in db.query(UserRole).filter_by(user_id=supabase_user_id).all()}
+        user_id = user.id if user else supabase_user_id
+        assigned_roles = {row.role for row in db.query(UserRole).filter_by(user_id=user_id).all()}
         if assigned_roles and assigned_roles != {role}:
             can_convert_unassigned_farmer = (
                 assigned_roles == {"farmer"}
                 and role in {"cooperative_admin", "processor_admin"}
-                and not db.query(FarmMember.farm_id).filter_by(user_id=supabase_user_id).first()
-                and not db.query(Farm.id).filter_by(created_by=supabase_user_id).first()
+                and not db.query(FarmMember.farm_id).filter_by(user_id=user_id).first()
+                and not db.query(Farm.id).filter_by(created_by=user_id).first()
             )
             if not can_convert_unassigned_farmer:
                 raise ValueError("This account already has a role or farm data; operator review is required before changing access")
-            db.query(UserRole).filter_by(user_id=supabase_user_id, role="farmer").delete(synchronize_session=False)
+            db.query(UserRole).filter_by(user_id=user_id, role="farmer").delete(synchronize_session=False)
             assigned_roles = set()
         if not user:
             user = User(id=supabase_user_id, display_name=display_name, email=normalized_email)
             db.add(user)
+            user_id = supabase_user_id
         else:
             user.display_name = display_name
 
         if role not in assigned_roles:
-            db.add(UserRole(user_id=supabase_user_id, role=role))
+            db.add(UserRole(user_id=user_id, role=role))
         if role == "veterinarian":
-            membership = db.get(FarmMember, (farm_id, supabase_user_id))
+            membership = db.get(FarmMember, (farm_id, user_id))
             if membership and membership.role != "veterinarian":
                 raise ValueError("This account already has a different role on the selected farm")
             if not membership:
-                db.add(FarmMember(farm_id=farm_id, user_id=supabase_user_id, role="veterinarian"))
+                db.add(FarmMember(farm_id=farm_id, user_id=user_id, role="veterinarian"))
         else:
-            membership = db.get(OrganizationMember, (organization_id, supabase_user_id))
+            membership = db.get(OrganizationMember, (organization_id, user_id))
             if membership and membership.role != role:
                 raise ValueError("This account already has a different role in the selected organization")
             if not membership:
-                db.add(OrganizationMember(organization_id=organization_id, user_id=supabase_user_id, role=role))
+                db.add(OrganizationMember(organization_id=organization_id, user_id=user_id, role=role))
 
         db.add(AuditLog(
             action="operator.staff_provisioned",
             entity_type="user",
-            entity_id=str(supabase_user_id),
+            entity_id=str(user_id),
             farm_id=farm_id,
             metadata_json={"role": role, "organization_id": str(organization_id) if organization_id else None},
         ))
         db.commit()
-        return supabase_user_id
+        return user_id
 
 
 def main() -> int:

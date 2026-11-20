@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 from jwt import PyJWKClient
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
-from .models import User, UserRole
+from .models import SupabaseIdentityLink, User, UserRole
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -18,17 +18,6 @@ bearer = HTTPBearer(auto_error=False)
 def issue_demo_token(user: User, role: str) -> str:
     return jwt.encode(
         {"sub": str(user.id), "role": role, "demo": True, "exp": datetime.now(timezone.utc) + timedelta(hours=12)},
-        settings.demo_auth_secret,
-        algorithm="HS256",
-    )
-
-
-def issue_access_code_token(user: User) -> str:
-    now = datetime.now(timezone.utc)
-    return jwt.encode(
-        {"sub": str(user.id), "email": user.email, "name": user.display_name,
-         "role": "farmer", "iss": "terravanta-access-code", "aud": "terravanta-api",
-         "iat": now, "exp": now + timedelta(hours=12)},
         settings.demo_auth_secret,
         algorithm="HS256",
     )
@@ -71,15 +60,6 @@ def current_identity(
     if credentials is None:
         raise HTTPException(status_code=401, detail="Sign in to continue")
     token = credentials.credentials
-    if settings.temp_access_auth_enabled:
-        try:
-            return jwt.decode(
-                token, settings.demo_auth_secret, algorithms=["HS256"],
-                issuer="terravanta-access-code", audience="terravanta-api",
-            )
-        except Exception:
-            if not settings.supabase_url:
-                raise HTTPException(status_code=401, detail="Invalid or expired access code session")
     if settings.supabase_url:
         try:
             header = jwt.get_unverified_header(token)
@@ -123,12 +103,34 @@ def current_identity(
         raise HTTPException(status_code=401, detail="Invalid or expired access token") from exc
 
 
-def current_user(
+def get_scoped_db(
     identity: dict = Depends(current_identity),
     db: Session = Depends(get_db),
+):
+    """Open a request-scoped transaction and apply verified identity to PostgreSQL RLS."""
+    try:
+        user_id = str(UUID(identity["sub"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid account identity") from exc
+
+    # The Session after_begin hook resolves this verified provider subject to
+    # Terravanta's stable internal user ID for PostgreSQL RLS. SQLite mirrors
+    # the mapping for local development and unit tests.
+    db.info["terravanta.auth_subject"] = user_id
+    db.info["terravanta.user_id"] = user_id
+    if db.get_bind().dialect.name == "sqlite":
+        link = db.get(SupabaseIdentityLink, UUID(user_id))
+        if link:
+            db.info["terravanta.user_id"] = str(link.user_id)
+    yield db
+
+
+def current_user(
+    identity: dict = Depends(current_identity),
+    db: Session = Depends(get_scoped_db),
 ) -> User:
     try:
-        user_id = UUID(identity["sub"])
+        user_id = UUID(str(db.info.get("terravanta.user_id") or identity["sub"]))
     except (KeyError, ValueError, TypeError) as exc:
         raise HTTPException(status_code=401, detail="Invalid account identity") from exc
     user = db.get(User, user_id)

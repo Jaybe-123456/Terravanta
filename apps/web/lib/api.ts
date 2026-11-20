@@ -1,14 +1,22 @@
 import { enqueue, queueOwnerId, readQueue, removeQueued, updateQueueError } from "./offline-queue";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
-export const AUTH_MODE = process.env.NEXT_PUBLIC_AUTH_MODE || "supabase";
+// Production authentication is always Supabase Auth. Keep synthetic role
+// switching as an explicit local-only development mode.
+export function resolveAuthMode(configuredMode = "", nodeEnvironment = process.env.NODE_ENV): "demo" | "supabase" {
+  return nodeEnvironment !== "production" && configuredMode === "demo" ? "demo" : "supabase";
+}
+export const AUTH_MODE = resolveAuthMode(process.env.NEXT_PUBLIC_AUTH_MODE);
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 export const SUPABASE_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 const DEMO_SESSION_KEY = "terravanta-session-v1";
 const ACCOUNT_KEY = "terravanta-account-id-v1";
 let currentAccessToken = "";
+let currentRefreshToken = "";
+let currentUserEmail = "";
 export type Session = { access_token: string; refresh_token?: string; expires_at?: number; user: { id: string; name: string; role: string; email?: string } };
+export type AuthRedirect = { session: Session | null; passwordRecovery: boolean };
 
 export async function loginDemo(role: string): Promise<Session> {
   const response = await fetch(`${API_URL}/api/v1/auth/demo-login?role=${encodeURIComponent(role)}`, { method: "POST", cache: "no-store" });
@@ -23,6 +31,7 @@ async function createTerravantaSession(auth: any, fallbackEmail = ""): Promise<S
   });
   const profile = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(profile.detail || "Could not create your Terravanta account.");
+  currentUserEmail = profile.email || fallbackEmail;
   return {
     access_token: auth.access_token,
     refresh_token: auth.refresh_token,
@@ -39,31 +48,8 @@ export async function loginSupabase(email: string, password: string): Promise<Se
   });
   const auth = await response.json().catch(() => ({}));
   if (!response.ok || !auth.access_token) throw new Error(auth.msg || auth.message || "Email or password was not accepted.");
+  currentUserEmail = email;
   return createTerravantaSession(auth, email);
-}
-
-export async function loginAccessCode(name: string, email: string, code: string): Promise<Session> {
-  const response = await fetch(`${API_URL}/api/v1/auth/access-code-login`, {
-    method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email, code }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.access_token) throw new Error(result.detail || "Name, email, or access code was not accepted.");
-  return {
-    access_token: result.access_token,
-    expires_at: Math.floor(Date.now() / 1000) + Number(result.expires_in || 43200),
-    user: result.user,
-  };
-}
-
-export async function requestAccessCode(name: string, email: string): Promise<string> {
-  const response = await fetch(`${API_URL}/api/v1/auth/request-access-code`, {
-    method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email }),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.detail || "Could not send a verification code.");
-  return result.message || "If these details can be registered, a verification code has been emailed. It expires in 10 minutes.";
 }
 
 export async function signUpSupabase(name: string, email: string, password: string): Promise<Session | null> {
@@ -77,10 +63,40 @@ export async function signUpSupabase(name: string, email: string, password: stri
   const auth = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(auth.msg || auth.message || "Could not create the account.");
   if (!auth.access_token || !auth.user?.id) return null;
+  currentUserEmail = email;
   return createTerravantaSession(auth, email);
 }
 
-export async function consumeSupabaseRedirect(): Promise<Session | null> {
+export async function requestSupabasePasswordReset(email: string): Promise<void> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Supabase password recovery is not configured for this deployment.");
+  const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;
+  const endpoint = `${SUPABASE_URL}/auth/v1/recover${redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : ""}`;
+  const response = await fetch(endpoint, {
+    method: "POST", cache: "no-store", headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.msg || result.message || "Could not request password recovery. Try again later.");
+}
+
+export async function updateSupabasePassword(password: string): Promise<Session> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !currentAccessToken || !currentRefreshToken) {
+    throw new Error("This password-reset link has expired. Request a new recovery email.");
+  }
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: "PUT", cache: "no-store", headers: {
+      apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${currentAccessToken}`, "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password }),
+  });
+  const user = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(user.msg || user.message || "Supabase could not update the password. Request a new recovery email.");
+  const email = user.email || currentUserEmail;
+  if (!email) throw new Error("Password changed, but the recovery identity has no email. Sign in with your new password.");
+  return loginSupabase(email, password);
+}
+
+export async function consumeSupabaseRedirect(): Promise<AuthRedirect | null> {
   if (typeof window === "undefined" || AUTH_MODE !== "supabase" || !window.location.hash) return null;
   const params = new URLSearchParams(window.location.hash.slice(1));
   const accessToken = params.get("access_token");
@@ -89,9 +105,16 @@ export async function consumeSupabaseRedirect(): Promise<Session | null> {
   window.history.replaceState({}, document.title, cleanUrl);
   const error = params.get("error_description");
   if (error) throw new Error(error.replaceAll("+", " "));
+  if (!accessToken) return null;
   const refreshToken = params.get("refresh_token");
   if (!refreshToken) throw new Error("The confirmation link did not include a session. Return to sign in and try again.");
   const expiresIn = Number(params.get("expires_in") || 3600);
+  if (params.get("type") === "recovery") {
+    currentAccessToken = accessToken;
+    currentRefreshToken = refreshToken;
+    await storeSupabaseRefreshToken(refreshToken);
+    return { session: null, passwordRecovery: true };
+  }
   const session = await createTerravantaSession({
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -100,34 +123,38 @@ export async function consumeSupabaseRedirect(): Promise<Session | null> {
     user: { id: "confirmed" },
   });
   await persistSession(session);
-  return session;
+  return { session, passwordRecovery: false };
+}
+
+async function storeSupabaseRefreshToken(refreshToken: string): Promise<void> {
+  const response = await fetch("/api/session", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }), cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Could not secure the session in this browser. Request a new recovery email.");
 }
 
 export async function persistSession(session: Session): Promise<void> {
   if (typeof window === "undefined") return;
   currentAccessToken = session.access_token;
-  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
+  currentRefreshToken = session.refresh_token || currentRefreshToken;
+  if (AUTH_MODE === "demo") {
     localStorage.setItem(ACCOUNT_KEY, session.user.id);
-    (AUTH_MODE === "access_code" ? sessionStorage : localStorage).setItem(DEMO_SESSION_KEY, JSON.stringify(session));
+    localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(session));
     return;
   }
   if (!session.refresh_token) throw new Error("Supabase did not return a refresh token. Sign in again.");
-  const response = await fetch("/api/session", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: session.refresh_token }), cache: "no-store",
-  });
-  if (!response.ok) throw new Error("Could not secure the session in this browser. Check the web service and sign in again.");
+  await storeSupabaseRefreshToken(session.refresh_token);
   localStorage.setItem(ACCOUNT_KEY, session.user.id);
 }
 
 export async function restoreSession(): Promise<Session | null> {
   if (typeof window === "undefined") return null;
-  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
+  if (AUTH_MODE === "demo") {
     try {
-      const store = AUTH_MODE === "access_code" ? sessionStorage : localStorage;
-      const session = JSON.parse(store.getItem(DEMO_SESSION_KEY) || "null") as Session | null;
+      const session = JSON.parse(localStorage.getItem(DEMO_SESSION_KEY) || "null") as Session | null;
       if (session?.expires_at && session.expires_at <= Math.floor(Date.now() / 1000)) {
-        store.removeItem(DEMO_SESSION_KEY);
+        localStorage.removeItem(DEMO_SESSION_KEY);
         return null;
       }
       if (session?.access_token) currentAccessToken = session.access_token;
@@ -149,9 +176,11 @@ export async function restoreSession(): Promise<Session | null> {
 export async function clearSession(): Promise<void> {
   if (typeof window === "undefined") return;
   currentAccessToken = "";
+  currentRefreshToken = "";
+  currentUserEmail = "";
   localStorage.removeItem(ACCOUNT_KEY);
-  if (AUTH_MODE === "demo" || AUTH_MODE === "access_code") {
-    (AUTH_MODE === "access_code" ? sessionStorage : localStorage).removeItem(DEMO_SESSION_KEY);
+  if (AUTH_MODE === "demo") {
+    localStorage.removeItem(DEMO_SESSION_KEY);
     return;
   }
   await fetch("/api/session", { method: "DELETE", cache: "no-store" }).catch(() => undefined);

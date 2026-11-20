@@ -25,6 +25,14 @@ class User(Base):
     roles: Mapped[list["UserRole"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class SupabaseIdentityLink(Base):
+    """Maps a verified Supabase subject to Terravanta's stable internal user ID."""
+    __tablename__ = "supabase_identity_links"
+    supabase_user_id: Mapped[object] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class UserRole(Base):
     __tablename__ = "user_roles"
     user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -33,7 +41,7 @@ class UserRole(Base):
 
 
 class AccessCode(Base):
-    """Hashed one-time email codes and legacy pilot invitations."""
+    """Legacy schema retained for historical Alembic revisions; no runtime auth path uses it."""
     __tablename__ = "access_codes"
     id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)

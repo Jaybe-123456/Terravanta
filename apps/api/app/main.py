@@ -1,7 +1,6 @@
 import csv
 import json
 import hashlib
-import hmac
 import io
 import logging
 import re
@@ -11,12 +10,12 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
-import httpx
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -25,15 +24,15 @@ from pypdf import PdfReader
 
 from .ai import nvidia, parse_structured, safe_case_response
 from .config import settings
-from .db import Base, SessionLocal, engine, get_db
+from .db import AdminSessionLocal, Base, admin_engine, engine, get_admin_db, get_db
 from .models import (
-    AIRequest, AIResponse, AccessCode, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
+    AIRequest, AIResponse, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
-    FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot,
+    FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot, SupabaseIdentityLink,
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, SettlementClose, SettlementCloseItem, User, UserRole,
 )
 from .schemas import (
-    AccessCodeLogin, AccessCodeRequest, AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
+    AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
     SettlementApproveCreate, SettlementReviewCreate,
@@ -41,44 +40,12 @@ from .schemas import (
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
 from .settlement import parse_settlement_sources
-from .security import bearer, current_identity, current_user, issue_access_code_token, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
+from .security import bearer, current_identity, current_user, get_scoped_db, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
 from .seed import FARMER_ID, FARM_ID, seed
 from .receivables import router as receivables_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("terravanta")
-
-
-def email_code_hash(email: str, code: str) -> str:
-    message = f"email-otp\0{email}\0{code}".encode("utf-8")
-    return hmac.new(settings.demo_auth_secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
-
-
-def send_access_code_email(email: str, name: str, code: str):
-    if not settings.resend_api_key or not settings.access_code_from_email:
-        raise HTTPException(503, "Email code delivery is not configured yet. Please try again later.")
-    text_body = (
-        f"Hello {name},\n\nYour Terravanta sign-in code is {code}. "
-        "It expires in 10 minutes and can be used once. If you did not request it, ignore this email."
-    )
-    try:
-        response = httpx.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {settings.resend_api_key}", "Content-Type": "application/json"},
-            json={
-                "from": settings.access_code_from_email,
-                "to": [email],
-                "subject": "Your Terravanta sign-in code",
-                "text": text_body,
-            },
-            timeout=10,
-        )
-    except httpx.HTTPError as exc:
-        log.warning("Access code email delivery failed (%s)", type(exc).__name__)
-        raise HTTPException(503, "We could not send your code. Please try again later.") from exc
-    if not response.is_success:
-        log.warning("Access code email provider returned HTTP %s", response.status_code)
-        raise HTTPException(503, "We could not send your code. Please try again later.")
 
 
 def initialize_database():
@@ -87,15 +54,15 @@ def initialize_database():
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         return
-    Base.metadata.create_all(bind=engine)
-    if engine.dialect.name == "postgresql":
-        with engine.begin() as connection:
+    Base.metadata.create_all(bind=admin_engine)
+    if admin_engine.dialect.name == "postgresql":
+        with admin_engine.begin() as connection:
             connection.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS postgis")
             connection.exec_driver_sql("ALTER TABLE farms ADD COLUMN IF NOT EXISTS location geometry(Point, 4326)")
             connection.exec_driver_sql("UPDATE farms SET location = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326) WHERE location IS NULL AND latitude IS NOT NULL AND longitude IS NOT NULL")
             connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_farms_location_gist ON farms USING GIST (location)")
     if settings.enable_synthetic_data:
-        with SessionLocal() as db:
+        with AdminSessionLocal() as db:
             seed(db)
 
 
@@ -167,7 +134,7 @@ def health(db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/auth/demo-login")
-def demo_login(role: str, db: Session = Depends(get_db)):
+def demo_login(role: str, db: Session = Depends(get_admin_db)):
     if settings.app_env == "production" or not settings.enable_synthetic_data:
         raise HTTPException(404, "Demo authentication is disabled")
     role = role.lower()
@@ -180,110 +147,11 @@ def demo_login(role: str, db: Session = Depends(get_db)):
     return {"access_token": issue_demo_token(user, role), "token_type": "bearer", "user": {"id": str(user.id), "name": user.display_name, "role": role}, "synthetic": True}
 
 
-@app.post("/api/v1/auth/request-access-code", status_code=202)
-def request_access_code(payload: AccessCodeRequest, db: Session = Depends(get_db)):
-    """Email a short-lived one-time code; never return the code in the API response."""
-    if not settings.temp_access_auth_enabled:
-        raise HTTPException(404, "Temporary access-code sign-in is disabled")
-    if not settings.resend_api_key or not settings.access_code_from_email:
-        raise HTTPException(503, "Email code delivery is not configured yet. Please try again later.")
-    now = datetime.now(timezone.utc)
-    recent_count = db.query(AccessCode).filter(
-        AccessCode.email == payload.email,
-        AccessCode.code_type == "email_otp",
-        AccessCode.created_at >= now - timedelta(minutes=15),
-    ).count()
-    if recent_count >= 3:
-        raise HTTPException(429, "Too many codes requested for this email. Try again in 15 minutes.")
-    service_count = db.query(AccessCode).filter(
-        AccessCode.code_type == "email_otp",
-        AccessCode.created_at >= now - timedelta(hours=1),
-    ).count()
-    if service_count >= 100:
-        raise HTTPException(429, "Sign-in code requests are temporarily busy. Try again later.")
-
-    user = db.query(User).filter(func.lower(User.email) == payload.email).first()
-    eligible = True
-    if user:
-        roles = user_roles(db, user)
-        eligible = (not roles or roles == {"farmer"}) and user.display_name.casefold() == payload.name.casefold()
-    if eligible:
-        code = f"{secrets.randbelow(100_000_000):08d}"
-        for previous in db.query(AccessCode).filter_by(email=payload.email, code_type="email_otp", revoked_at=None).all():
-            previous.revoked_at = now
-        record = AccessCode(
-            code_hash=email_code_hash(payload.email, code), email=payload.email,
-            display_name=payload.name, code_type="email_otp",
-            expires_at=now + timedelta(minutes=10), attempt_count=0,
-        )
-        db.add(record)
-        db.commit()
-        try:
-            send_access_code_email(payload.email, payload.name, code)
-        except HTTPException:
-            record.revoked_at = datetime.now(timezone.utc)
-            db.commit()
-            raise
-    return {"message": "If these details can be registered, a verification code has been sent to that email. It expires in 10 minutes."}
-
-
-@app.post("/api/v1/auth/access-code-login")
-def access_code_login(payload: AccessCodeLogin, db: Session = Depends(get_db)):
-    if not settings.temp_access_auth_enabled:
-        raise HTTPException(404, "Temporary access-code sign-in is disabled")
-    now = datetime.now(timezone.utc)
-    record = None
-    if len(payload.code) == 8 and payload.code.isdigit():
-        record = db.query(AccessCode).filter_by(email=payload.email, code_type="email_otp", revoked_at=None).order_by(AccessCode.created_at.desc()).first()
-        expires_at = record.expires_at if record else None
-        if expires_at and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        valid_code = bool(record and hmac.compare_digest(record.code_hash, email_code_hash(payload.email, payload.code)))
-        if not record or not expires_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold() or not valid_code:
-            if record:
-                record.attempt_count += 1
-                if record.attempt_count >= 5 or expires_at <= now:
-                    record.revoked_at = now
-                db.commit()
-            raise HTTPException(401, "Name, email, or verification code is invalid or expired")
-        record.revoked_at = now  # Email verification codes are single-use.
-    else:
-        code_hash = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
-        record = db.query(AccessCode).filter_by(code_hash=code_hash, email=payload.email, code_type="invite").first()
-        expires_at = record.expires_at if record else None
-        if expires_at and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if not record or record.revoked_at or expires_at <= now or record.display_name.casefold() != payload.name.casefold():
-            raise HTTPException(401, "Name, email, or verification code is invalid or expired")
-
-    user = db.query(User).filter(func.lower(User.email) == payload.email).first()
-    created = False
-    if user is None:
-        user = User(display_name=record.display_name, email=record.email)
-        db.add(user)
-        db.flush()
-        db.add(UserRole(user_id=user.id, role="farmer"))
-        audit(db, user, "account.farmer_access_code_created", "user", str(user.id))
-        created = True
-    else:
-        roles = user_roles(db, user)
-        if roles and roles != {"farmer"}:
-            raise HTTPException(403, "This access code is only valid for farmer accounts")
-        if not roles:
-            db.add(UserRole(user_id=user.id, role="farmer"))
-        if user.display_name.casefold() != record.display_name.casefold():
-            raise HTTPException(409, "The invited name does not match this existing account; contact Terravanta support")
-    audit(db, user, "auth.access_code_login", "user", str(user.id))
-    db.commit()
-    return {"access_token": issue_access_code_token(user), "token_type": "bearer", "expires_in": 43200,
-            "user": {"id": str(user.id), "name": user.display_name, "email": user.email, "role": "farmer", "created": created}}
-
-
 @app.post("/api/v1/auth/onboard", status_code=200)
 def onboard_account(
     identity: dict = Depends(current_identity),
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_scoped_db),
 ):
     if identity.get("demo") or not settings.supabase_url:
         raise HTTPException(403, "Real farmer onboarding requires a verified Supabase identity")
@@ -298,23 +166,76 @@ def onboard_account(
     if not email or "@" not in email:
         raise HTTPException(422, "A verified email address is required to create a Terravanta account")
 
-    user = db.get(User, user_id)
-    created = False
+    metadata = provider_user.get("user_metadata") or {}
+    display_name = str(metadata.get("full_name") or metadata.get("name") or email.split("@", 1)[0]).strip()[:120]
+    if len(display_name) < 2:
+        raise HTTPException(422, "Enter your name when creating the account")
+
+    if db.get_bind().dialect.name == "postgresql":
+        claim = db.execute(text("""
+            SELECT internal_user_id, outcome
+            FROM terravanta_private.claim_farmer_identity(CAST(:subject AS uuid), :email, :display_name)
+        """), {"subject": str(user_id), "email": email, "display_name": display_name}).one()
+        internal_user_id, outcome = claim.internal_user_id, claim.outcome
+        if outcome == "unauthorized":
+            db.rollback()
+            raise HTTPException(401, "Supabase identity could not be bound to this request")
+        if outcome == "invalid_profile":
+            db.rollback()
+            raise HTTPException(422, "A valid verified email and name are required")
+        if outcome == "conflict":
+            db.rollback()
+            raise HTTPException(409, "This email is linked to an account that needs administrator review")
+        db.info["terravanta.user_id"] = str(internal_user_id)
+        db.execute(text("SELECT set_config('terravanta.user_id', :user_id, true)"), {"user_id": str(internal_user_id)})
+    else:
+        # The SQLite path mirrors first-run and legacy farmer linking in local
+        # development. Production performs this atomically in PostgreSQL.
+        linked = db.get(SupabaseIdentityLink, user_id)
+        user = db.get(User, linked.user_id) if linked else db.get(User, user_id)
+        outcome = "existing" if user else ""
+        if user and user.email.lower() != email:
+            outcome = "conflict"
+        if user is None:
+            user = db.query(User).filter(func.lower(User.email) == email).first()
+            if user:
+                assigned = user_roles(db, user)
+                has_org_membership = db.query(OrganizationMember).filter_by(user_id=user.id).first() is not None
+                is_veterinarian = db.query(FarmMember).filter_by(user_id=user.id, role="veterinarian").first() is not None
+                if assigned.difference({"farmer"}) or has_org_membership or is_veterinarian:
+                    outcome = "conflict"
+                else:
+                    outcome = "linked_legacy_farmer"
+                    if not linked:
+                        db.add(SupabaseIdentityLink(supabase_user_id=user_id, user_id=user.id))
+                    if "farmer" not in assigned:
+                        db.add(UserRole(user_id=user.id, role="farmer"))
+            else:
+                user = User(id=user_id, display_name=display_name, email=email)
+                db.add(user)
+                db.add(UserRole(user_id=user.id, role="farmer"))
+                outcome = "created"
+        if outcome == "conflict":
+            db.rollback()
+            raise HTTPException(409, "This email is linked to an account that needs administrator review")
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(409, "This email is linked to an account that needs administrator review") from exc
+        internal_user_id = user.id
+        db.info["terravanta.user_id"] = str(internal_user_id)
+
+    user = db.get(User, internal_user_id)
     if user is None:
-        existing_email = db.query(User).filter(func.lower(User.email) == email).first()
-        if existing_email:
-            raise HTTPException(409, "This email is linked to another Terravanta identity. Contact support.")
-        metadata = provider_user.get("user_metadata") or {}
-        display_name = str(metadata.get("full_name") or metadata.get("name") or email.split("@", 1)[0]).strip()[:120]
-        if len(display_name) < 2:
-            raise HTTPException(422, "Enter your name when creating the account")
-        user = User(id=user_id, display_name=display_name, email=email)
-        db.add(user)
-        db.flush()
-        db.add(UserRole(user_id=user.id, role="farmer"))
+        db.rollback()
+        raise HTTPException(409, "Terravanta account provisioning could not be completed")
+    if outcome == "created":
         audit(db, user, "account.farmer_onboarded", "user", str(user.id))
-        db.commit()
-        created = True
+    elif outcome == "linked_legacy_farmer":
+        audit(db, user, "account.identity_linked", "user", str(user.id), metadata={"provider": "supabase"})
+    db.commit()
+    created = outcome == "created"
     roles = user_roles(db, user)
     if not roles:
         raise HTTPException(403, "This account needs a veterinarian or cooperative invitation before access")
@@ -322,12 +243,12 @@ def onboard_account(
 
 
 @app.get("/api/v1/me")
-def me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def me(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     return {"id": str(user.id), "name": user.display_name, "email": user.email, "role": user_role(db, user), "roles": sorted(user_roles(db, user)), "synthetic": user.email.endswith(".demo")}
 
 
 @app.get("/api/v1/dashboard")
-def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def dashboard(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = primary_farm(db, user)
     animals = db.query(Animal).filter_by(farm_id=farm.id).count()
     open_cases = db.query(AnimalHealthEvent).filter_by(farm_id=farm.id, status="open").count()
@@ -352,19 +273,19 @@ def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db))
 
 
 @app.get("/api/v1/farms")
-def list_farms(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_farms(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farms = db.query(Farm).join(FarmMember, FarmMember.farm_id == Farm.id).filter(FarmMember.user_id == user.id).order_by(Farm.created_at.desc()).all()
     return [dump(farm) for farm in farms]
 
 
 @app.get("/api/v1/cooperatives")
-def list_cooperatives(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_cooperatives(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     require_role(db, user, "farmer", "platform_admin")
     return [{"id": str(row.id), "name": row.name} for row in db.query(Organization).filter_by(kind="cooperative").order_by(Organization.name).all()]
 
 
 @app.post("/api/v1/farms", status_code=201)
-def create_farm(body: FarmCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_farm(body: FarmCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     require_role(db, user, "farmer", "platform_admin")
     code = f"TV-{re.sub('[^A-Z]', '', body.county.upper())[:3]}-{secrets.token_hex(2).upper()}"
     farm = Farm(code=code, name=body.name, owner_name=body.owner_name, county=body.county, subcounty=body.subcounty, latitude=body.latitude, longitude=body.longitude, size_acres=body.size_acres, farming_system=body.farming_system, production_activities=body.production_activities, verification_status="farmer_submitted", is_synthetic=False, created_by=user.id)
@@ -379,12 +300,12 @@ def create_farm(body: FarmCreate, user: User = Depends(current_user), db: Sessio
 
 
 @app.get("/api/v1/farms/{farm_id}")
-def get_farm(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_farm(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     return dump(farm_access(db, user, farm_id))
 
 
 @app.get("/api/v1/farms/{farm_id}/passport")
-def passport(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def passport(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     sharing = []
     for consent in db.query(Consent).filter_by(farm_id=farm.id).all():
@@ -396,13 +317,13 @@ def passport(farm_id: UUID, user: User = Depends(current_user), db: Session = De
 
 
 @app.get("/api/v1/farms/{farm_id}/plots")
-def list_plots(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_plots(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return [dump(row) for row in db.query(Plot).filter_by(farm_id=farm.id).order_by(Plot.name).all()]
 
 
 @app.post("/api/v1/farms/{farm_id}/plots", status_code=201)
-def create_plot(farm_id: UUID, body: PlotCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_plot(farm_id: UUID, body: PlotCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     occupied = db.query(func.coalesce(func.sum(Plot.area_acres), 0)).filter_by(farm_id=farm.id).scalar()
@@ -417,13 +338,13 @@ def create_plot(farm_id: UUID, body: PlotCreate, user: User = Depends(current_us
 
 
 @app.get("/api/v1/farms/{farm_id}/animals")
-def list_animals(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_animals(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return farm_animals(db, farm.id)
 
 
 @app.post("/api/v1/farms/{farm_id}/animals", status_code=201)
-def create_animal(farm_id: UUID, body: AnimalCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_animal(farm_id: UUID, body: AnimalCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     row = Animal(farm_id=farm.id, **body.model_dump())
@@ -435,7 +356,7 @@ def create_animal(farm_id: UUID, body: AnimalCreate, user: User = Depends(curren
 
 
 @app.get("/api/v1/animals/{animal_id}")
-def get_animal(animal_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_animal(animal_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     row = db.get(Animal, animal_id)
     if not row:
         raise HTTPException(404, "Animal not found")
@@ -444,7 +365,7 @@ def get_animal(animal_id: UUID, user: User = Depends(current_user), db: Session 
 
 
 @app.get("/api/v1/animals/{animal_id}/health-events")
-def health_history(animal_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def health_history(animal_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     animal = db.get(Animal, animal_id)
     if not animal:
         raise HTTPException(404, "Animal not found")
@@ -453,7 +374,7 @@ def health_history(animal_id: UUID, user: User = Depends(current_user), db: Sess
 
 
 @app.post("/api/v1/animals/{animal_id}/health-events", status_code=201)
-def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     animal = db.get(Animal, animal_id)
     if not animal:
         raise HTTPException(404, "Animal not found")
@@ -471,7 +392,7 @@ def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = D
 
 
 @app.get("/api/v1/veterinary/queue")
-def veterinary_queue(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def veterinary_queue(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     role = require_role(db, user, "veterinarian", "platform_admin")
     query = db.query(AnimalHealthEvent).filter(AnimalHealthEvent.status == "open")
     if role != "platform_admin":
@@ -486,7 +407,7 @@ def veterinary_queue(user: User = Depends(current_user), db: Session = Depends(g
 
 
 @app.post("/api/v1/health-events/{event_id}/verify")
-def verify_health_event(event_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def verify_health_event(event_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     event = db.get(AnimalHealthEvent, event_id)
     if not event:
         raise HTTPException(404, "Health event not found")
@@ -501,13 +422,13 @@ def verify_health_event(event_id: UUID, user: User = Depends(current_user), db: 
 
 
 @app.get("/api/v1/farms/{farm_id}/feed-batches")
-def list_feed(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_feed(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return [dump(row) for row in db.query(FeedBatch).filter_by(farm_id=farm.id).order_by(FeedBatch.batch_date.desc()).all()]
 
 
 @app.post("/api/v1/farms/{farm_id}/feed-batches", status_code=201)
-def create_feed(farm_id: UUID, body: FeedBatchCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_feed(farm_id: UUID, body: FeedBatchCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     data = body.model_dump()
@@ -524,7 +445,7 @@ def create_feed(farm_id: UUID, body: FeedBatchCreate, user: User = Depends(curre
 
 
 @app.post("/api/v1/farms/{farm_id}/feed-allocations", status_code=201)
-def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     batch = db.query(FeedBatch).filter_by(id=body.feed_batch_id, farm_id=farm.id).with_for_update().first()
@@ -542,7 +463,7 @@ def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, user: User = Depend
 
 
 @app.post("/api/v1/farms/{farm_id}/manure-records", status_code=201)
-def create_manure(farm_id: UUID, body: ManureCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_manure(farm_id: UUID, body: ManureCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     row = ManureRecord(farm_id=farm.id, **body.model_dump())
@@ -554,7 +475,7 @@ def create_manure(farm_id: UUID, body: ManureCreate, user: User = Depends(curren
 
 
 @app.post("/api/v1/farms/{farm_id}/compost-batches", status_code=201)
-def create_compost(farm_id: UUID, body: CompostCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_compost(farm_id: UUID, body: CompostCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     data = body.model_dump()
@@ -571,7 +492,7 @@ def create_compost(farm_id: UUID, body: CompostCreate, user: User = Depends(curr
 
 
 @app.post("/api/v1/farms/{farm_id}/compost-applications", status_code=201)
-def apply_compost(farm_id: UUID, body: CompostApplicationCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def apply_compost(farm_id: UUID, body: CompostApplicationCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     compost = db.query(CompostBatch).filter_by(id=body.compost_batch_id, farm_id=farm.id).with_for_update().first()
@@ -591,19 +512,19 @@ def apply_compost(farm_id: UUID, body: CompostApplicationCreate, user: User = De
 
 
 @app.get("/api/v1/farms/{farm_id}/resource-cycle")
-def resource_cycle(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def resource_cycle(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return {"plots": [dump(row) for row in db.query(Plot).filter_by(farm_id=farm.id).all()], "feed_batches": [dump(row) for row in db.query(FeedBatch).filter_by(farm_id=farm.id).all()], "allocations": [dump(row) for row in db.query(FeedAllocation).filter_by(farm_id=farm.id).all()], "manure": [dump(row) for row in db.query(ManureRecord).filter_by(farm_id=farm.id).all()], "compost": [dump(row) for row in db.query(CompostBatch).filter_by(farm_id=farm.id).all()], "applications": [dump(row) for row in db.query(CompostApplication).filter_by(farm_id=farm.id).all()], "animals": farm_animals(db, farm.id), "note": "Recorded links only. No nutrient balances or agronomic recommendations are calculated."}
 
 
 @app.get("/api/v1/farms/{farm_id}/production-records")
-def list_production(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_production(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return [dump(row) for row in db.query(ProductionRecord).filter_by(farm_id=farm.id).order_by(ProductionRecord.recorded_on.desc()).all()]
 
 
 @app.post("/api/v1/farms/{farm_id}/production-records", status_code=201)
-def create_production(farm_id: UUID, body: ProductionCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_production(farm_id: UUID, body: ProductionCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     data = body.model_dump()
@@ -621,7 +542,7 @@ def create_production(farm_id: UUID, body: ProductionCreate, user: User = Depend
 
 
 @app.post("/api/v1/farms/{farm_id}/deliveries", status_code=201)
-def create_delivery(farm_id: UUID, body: DeliveryCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_delivery(farm_id: UUID, body: DeliveryCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     record = db.query(ProductionRecord).filter_by(id=body.production_record_id, farm_id=farm.id).with_for_update().first()
@@ -649,13 +570,13 @@ def create_delivery(farm_id: UUID, body: DeliveryCreate, user: User = Depends(cu
 
 
 @app.get("/api/v1/farms/{farm_id}/deliveries")
-def list_deliveries(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_deliveries(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return [{**dump(row), "buyer": db.get(Buyer, row.buyer_id).name, "lot": dump(db.get(ProductLot, row.product_lot_id))} for row in db.query(Delivery).filter_by(farm_id=farm.id).order_by(Delivery.delivery_date.desc()).all()]
 
 
 @app.post("/api/v1/farms/{farm_id}/consents", status_code=201)
-def create_consent(farm_id: UUID, body: ConsentCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def create_consent(farm_id: UUID, body: ConsentCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
     if body.scope not in {"delivery_summary", "verified_production"}:
@@ -679,7 +600,7 @@ def create_consent(farm_id: UUID, body: ConsentCreate, user: User = Depends(curr
 
 
 @app.delete("/api/v1/consents/{consent_id}")
-def revoke_consent(consent_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def revoke_consent(consent_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     row = db.get(Consent, consent_id)
     if not row or row.granted_by != user.id:
         raise HTTPException(404, "Consent not found")
@@ -699,7 +620,7 @@ def cooperative_organization_ids(db: Session, user: User) -> list[UUID]:
     return organization_ids
 
 
-def active_shared_farms(db: Session, user: User, organization_ids: list[UUID]) -> dict[str, Farm]:
+def active_shared_farms(db: Session, user: User, organization_ids: list[UUID]) -> dict[str, SimpleNamespace]:
     grants = db.query(Consent).filter(
         Consent.status == "active",
         Consent.scope == "delivery_summary",
@@ -709,7 +630,24 @@ def active_shared_farms(db: Session, user: User, organization_ids: list[UUID]) -
     farm_ids = {grant.farm_id for grant in grants}
     if not farm_ids:
         return {}
-    return {farm.code.casefold(): farm for farm in db.query(Farm).filter(Farm.id.in_(farm_ids)).all()}
+    farms: dict[str, SimpleNamespace] = {}
+    for farm_id in farm_ids:
+        farm = shared_farm_card(db, farm_id)
+        if farm:
+            farms[farm.code.casefold()] = farm
+    return farms
+
+
+def shared_farm_card(db: Session, farm_id: UUID):
+    """Return only farm identity fields covered by delivery-summary consent."""
+    if db.get_bind().dialect.name == "postgresql":
+        row = db.execute(
+            text("SELECT id, name, code, is_synthetic FROM terravanta_private.shared_farm_card(:farm_id)"),
+            {"farm_id": farm_id},
+        ).mappings().first()
+        return SimpleNamespace(**row) if row else None
+    # SQLite is used for local tests and has no PostgreSQL RLS helper function.
+    return db.get(Farm, farm_id)
 
 
 def reconciliation_summary(db: Session, run: ReconciliationRun, shared_farm_ids: set[UUID]) -> dict:
@@ -730,16 +668,16 @@ def reconciliation_summary(db: Session, run: ReconciliationRun, shared_farm_ids:
     }
 
 
-def reconciliation_detail(db: Session, run: ReconciliationRun, shared_farms: dict[str, Farm]) -> dict:
+def reconciliation_detail(db: Session, run: ReconciliationRun, shared_farms: dict[str, SimpleNamespace]) -> dict:
     shared_farm_ids = {farm.id for farm in shared_farms.values()}
+    farms_by_id = {farm.id: farm for farm in shared_farms.values()}
     items = db.query(ReconciliationItem).filter_by(run_id=run.id).order_by(ReconciliationItem.row_number).all()
     output = []
     for item in items:
         has_consent = item.matched_farm_id in shared_farm_ids
-        farm = db.get(Farm, item.matched_farm_id) if has_consent else None
+        farm = farms_by_id.get(item.matched_farm_id) if has_consent else None
         delivery = db.get(Delivery, item.matched_delivery_id) if has_consent and item.matched_delivery_id else None
         lot = db.get(ProductLot, delivery.product_lot_id) if delivery else None
-        production = db.get(ProductionRecord, lot.production_record_id) if lot else None
         status = item.status
         if item.matched_farm_id and not has_consent:
             status = "consent_revoked"
@@ -758,7 +696,7 @@ def reconciliation_detail(db: Session, run: ReconciliationRun, shared_farms: dic
             } if delivery else None),
             "trace_graph": ([
                 {"id": f"farm:{farm.id}", "type": "farm", "label": farm.name},
-                {"id": f"production:{production.id}", "type": "production_record", "label": f"{production.quantity:g} {production.unit} · {production.recorded_on.isoformat()}"},
+                {"id": f"production:{lot.production_record_id}", "type": "production_record", "label": "Source production record"},
                 {"id": f"lot:{lot.id}", "type": "product_lot", "label": lot.lot_code},
                 {"id": f"delivery:{delivery.id}", "type": "delivery", "label": delivery.reference or delivery.delivery_date.isoformat()},
                 {"id": f"intake:{item.id}", "type": "cooperative_intake", "label": f"Row {item.row_number}"},
@@ -774,7 +712,7 @@ def reconciliation_detail(db: Session, run: ReconciliationRun, shared_farms: dic
 async def create_reconciliation_run(
     file: UploadFile = File(...),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_scoped_db),
 ):
     organization_ids = cooperative_organization_ids(db, user)
     filename = Path(file.filename or "collection.csv").name[:255]
@@ -853,7 +791,7 @@ async def create_reconciliation_run(
 
 
 @app.get("/api/v1/cooperative/reconciliation/runs")
-def list_reconciliation_runs(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_reconciliation_runs(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization_ids = cooperative_organization_ids(db, user)
     shared_farms = active_shared_farms(db, user, organization_ids)
     runs = db.query(ReconciliationRun).filter_by(organization_id=organization_ids[0]).order_by(
@@ -863,7 +801,7 @@ def list_reconciliation_runs(user: User = Depends(current_user), db: Session = D
 
 
 @app.get("/api/v1/cooperative/reconciliation/runs/{run_id}")
-def get_reconciliation_run(run_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_reconciliation_run(run_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization_ids = cooperative_organization_ids(db, user)
     run = db.query(ReconciliationRun).filter_by(id=run_id, organization_id=organization_ids[0]).first()
     if not run:
@@ -876,7 +814,7 @@ def review_reconciliation_item(
     item_id: UUID,
     body: ReconciliationReviewCreate,
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_scoped_db),
 ):
     organization_ids = cooperative_organization_ids(db, user)
     item = db.get(ReconciliationItem, item_id)
@@ -939,7 +877,7 @@ async def create_settlement_close(
     processor_file: UploadFile = File(...),
     payout_file: UploadFile = File(...),
     user: User = Depends(current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_scoped_db),
 ):
     organization_ids = cooperative_organization_ids(db, user)
     files = {
@@ -1004,14 +942,14 @@ async def create_settlement_close(
 
 
 @app.get("/api/v1/cooperative/settlement-closes")
-def list_settlement_closes(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_settlement_closes(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization_ids = cooperative_organization_ids(db, user)
     closes = db.query(SettlementClose).filter_by(organization_id=organization_ids[0]).order_by(SettlementClose.created_at.desc()).limit(50).all()
     return [settlement_close_detail(db, close)["close"] for close in closes]
 
 
 @app.get("/api/v1/cooperative/settlement-closes/{close_id}")
-def get_settlement_close(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_settlement_close(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization_ids = cooperative_organization_ids(db, user)
     close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
     if not close:
@@ -1022,7 +960,7 @@ def get_settlement_close(close_id: UUID, user: User = Depends(current_user), db:
 @app.post("/api/v1/cooperative/settlement-closes/{close_id}/items/{item_id}/review")
 def review_settlement_item(
     close_id: UUID, item_id: UUID, body: SettlementReviewCreate,
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
 ):
     organization_ids = cooperative_organization_ids(db, user)
     close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
@@ -1047,7 +985,7 @@ def review_settlement_item(
 @app.post("/api/v1/cooperative/settlement-closes/{close_id}/approve")
 def approve_settlement_close(
     close_id: UUID, body: SettlementApproveCreate,
-    user: User = Depends(current_user), db: Session = Depends(get_db),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
 ):
     organization_ids = cooperative_organization_ids(db, user)
     close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
@@ -1082,7 +1020,7 @@ def spreadsheet_safe_cell(value):
 
 
 @app.get("/api/v1/cooperative/settlement-closes/{close_id}/statement-pack")
-def download_settlement_statement_pack(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def download_settlement_statement_pack(close_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     organization_ids = cooperative_organization_ids(db, user)
     close = db.query(SettlementClose).filter_by(id=close_id, organization_id=organization_ids[0]).first()
     if not close:
@@ -1102,7 +1040,7 @@ def download_settlement_statement_pack(close_id: UUID, user: User = Depends(curr
 
 
 @app.get("/api/v1/cooperative/deliveries")
-def cooperative_deliveries(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def cooperative_deliveries(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     require_role(db, user, "cooperative_admin", "platform_admin")
     member_orgs = select(OrganizationMember.organization_id).where(OrganizationMember.user_id == user.id, OrganizationMember.role == "cooperative_admin")
     consents = db.query(Consent).filter(
@@ -1114,7 +1052,9 @@ def cooperative_deliveries(user: User = Depends(current_user), db: Session = Dep
     consent_by_farm = {consent.farm_id: consent for consent in consents}
     result = []
     for farm_id, consent in consent_by_farm.items():
-        farm = db.get(Farm, farm_id)
+        farm = shared_farm_card(db, farm_id)
+        if not farm:
+            continue
         for row in db.query(Delivery).filter_by(farm_id=consent.farm_id).all():
             lot = db.get(ProductLot, row.product_lot_id)
             result.append({"farm_name": farm.name, "farm_code": farm.code, "delivery": dump(row), "product_type": lot.product_type, "lot_code": lot.lot_code, "scope": consent.scope, "synthetic": farm.is_synthetic, "documentation_gaps": [] if row.reference else ["Delivery reference is not recorded"]})
@@ -1142,13 +1082,13 @@ def build_alerts(db: Session, farm: Farm) -> list[dict]:
 
 
 @app.get("/api/v1/alerts")
-def get_alerts(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_alerts(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = primary_farm(db, user)
     return build_alerts(db, farm)
 
 
 @app.post("/api/v1/terras/route")
-def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     """Role-scoped, deterministic routing. This endpoint never writes farm data or calls a model."""
     role = user_role(db, user)
     message = body.message.lower()
@@ -1235,7 +1175,7 @@ def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), d
 
 
 @app.post("/api/v1/ai/veterinary-assistant")
-async def veterinary_assistant(body: AssistantRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def veterinary_assistant(body: AssistantRequest, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     animal = db.get(Animal, body.animal_id)
     if not animal:
         raise HTTPException(404, "Animal not found")
@@ -1284,7 +1224,7 @@ async def veterinary_assistant(body: AssistantRequest, user: User = Depends(curr
 
 
 @app.post("/api/v1/documents/extract", status_code=201)
-async def extract_document(farm_id: UUID, file: UploadFile = File(...), allow_external_processing: bool = Form(False), user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def extract_document(farm_id: UUID, file: UploadFile = File(...), allow_external_processing: bool = Form(False), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "veterinarian", "platform_admin")
     enforce_ai_rate_limit(db, user)
@@ -1365,7 +1305,7 @@ async def extract_document(farm_id: UUID, file: UploadFile = File(...), allow_ex
 
 
 @app.post("/api/v1/documents/{document_id}/review")
-def review_document(document_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def review_document(document_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     row = db.get(DocumentExtraction, document_id)
     if not row:
         raise HTTPException(404, "Document extraction not found")
@@ -1378,6 +1318,6 @@ def review_document(document_id: UUID, user: User = Depends(current_user), db: S
 
 
 @app.get("/api/v1/farms/{farm_id}/passport/shareable-records")
-def shareable_records(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def shareable_records(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     return {"farm": {"code": farm.code, "name": farm.name, "county": farm.county, "verification_status": farm.verification_status}, "deliveries": [dump(row) for row in db.query(Delivery).filter_by(farm_id=farm.id).all()], "scope": "delivery_summary", "synthetic": farm.is_synthetic}

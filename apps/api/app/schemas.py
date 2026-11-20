@@ -24,40 +24,6 @@ class FarmCreate(BaseModel):
         return self
 
 
-class AccessCodeRequest(BaseModel):
-    name: str = Field(min_length=2, max_length=120)
-    email: str = Field(min_length=5, max_length=255)
-
-    @model_validator(mode="after")
-    def validate_email(self):
-        self.name = self.name.strip()
-        self.email = self.email.strip().lower()
-        if len(self.name) < 2:
-            raise ValueError("Name must contain at least two characters")
-        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", self.email):
-            raise ValueError("Enter a valid email address")
-        return self
-
-
-class AccessCodeLogin(BaseModel):
-    name: str = Field(min_length=2, max_length=120)
-    email: str = Field(min_length=5, max_length=255)
-    code: str = Field(min_length=8, max_length=100)
-
-    @model_validator(mode="after")
-    def normalize_identity(self):
-        self.name = self.name.strip()
-        self.email = self.email.strip().lower()
-        self.code = self.code.strip()
-        if len(self.name) < 2:
-            raise ValueError("Name must contain at least two characters")
-        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", self.email):
-            raise ValueError("Enter a valid email address")
-        if len(self.code) == 8 and not self.code.isdigit():
-            raise ValueError("The email verification code must contain 8 digits")
-        return self
-
-
 class PlotCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     area_acres: float = Field(gt=0)

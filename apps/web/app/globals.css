@@ -11,7 +11,7 @@ button { cursor: pointer; }
 a { color: inherit; }
 .app-shell { min-height: 100vh; display: flex; }
 .sidebar-wrap { flex: 0 0 248px; width: 248px; position: relative; z-index: 5; }
-.sidebar { width: 248px; height: 100vh; position: fixed; inset: 0 auto 0 0; background: #fff; border-right: 1px solid #e8ede8; display: flex; flex-direction: column; padding: 22px 15px 14px; }
+.sidebar { width: 248px; height: 100vh; position: fixed; inset: 0 auto 0 0; background: #fff; border-right: 1px solid #e8ede8; display: flex; flex-direction: column; padding: 22px 15px 14px; overflow-y: auto; }
 .brand { display: flex; gap: 11px; align-items: center; margin: 1px 7px 27px; text-decoration: none; font-size: 19px; letter-spacing: -.65px; font-weight: 750; color: #1e3e2b; }
 .brand small { display: block; margin-top: 2px; letter-spacing: 1.55px; font-size: 8px; color: #849188; font-weight: 700; }
 .brand-mark { display: grid; place-items: center; background: #e8f1e7; color: #426e49; width: 36px; height: 36px; border-radius: 11px; }
@@ -26,6 +26,10 @@ a { color: inherit; }
 .nav-item { width: 100%; height: 40px; border: 0; border-radius: 8px; background: transparent; color: #6e7b72; display: flex; gap: 11px; align-items: center; padding: 0 11px; text-align: left; font-size: 12px; transition: background .16s, color .16s; }
 .nav-item:hover { background: #f6f8f5; color: var(--forest); }
 .nav-item.active { color: #315b3c; background: #eaf2e9; font-weight: 650; }
+.organization-nav-label { margin-top: 21px; }
+.nav-item-locked { color: #8a948c; }
+.nav-item-locked:hover { background: #f6f8f5; color: #526c57; }
+.nav-item-locked svg:last-child { margin-left: auto; color: #9aa59b; }
 .nav-count { margin-left: auto; width: 18px; height: 18px; border-radius: 7px; display: grid; place-items: center; color: #9b6619; background: #fbf2df; font-size: 9px; font-style: normal; font-weight: 700; }
 .sidebar-bottom { margin-top: auto; }
 .integrity-note { border-radius: 9px; background: #f4f7f2; padding: 11px 9px; display: flex; gap: 9px; color: #56805b; align-items: flex-start; }

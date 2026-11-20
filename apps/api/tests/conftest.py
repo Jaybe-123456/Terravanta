@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.db import Base, get_db
+from app.db import Base, get_admin_db, get_db
 from app.main import app, initialize_database
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -26,6 +26,12 @@ def reset_database():
         seed(db)
 
 
+@pytest.fixture
+def db_session():
+    with TestingSession() as db:
+        yield db
+
+
 @pytest.fixture(scope="session")
 def client():
     def override_db():
@@ -35,6 +41,7 @@ def client():
         finally:
             db.close()
     app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_admin_db] = override_db
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

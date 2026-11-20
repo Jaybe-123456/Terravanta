@@ -57,6 +57,67 @@ def test_real_onboarding_does_not_provision_unconfirmed_email(client, monkeypatc
         app.dependency_overrides.pop(current_identity, None)
 
 
+def test_supabase_onboarding_links_existing_legacy_farmer_by_verified_email(client, monkeypatch, db_session):
+    from app import main
+    from app.models import SupabaseIdentityLink, User, UserRole
+
+    legacy_user_id = uuid4()
+    supabase_user_id = uuid4()
+    legacy_email = "legacy.farmer@example.test"
+    db_session.add(User(id=legacy_user_id, display_name="Legacy Farmer", email=legacy_email))
+    db_session.add(UserRole(user_id=legacy_user_id, role="farmer"))
+    db_session.commit()
+
+    identity = {"sub": str(supabase_user_id), "demo": False}
+    monkeypatch.setattr(settings, "supabase_url", "https://terravanta-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_anon_key", "test-publishable-key")
+    monkeypatch.setattr(main, "verified_supabase_user", lambda token, subject: {
+        "id": str(subject), "email": legacy_email, "email_confirmed_at": "2026-01-01T00:00:00Z",
+        "user_metadata": {"full_name": "Verified Farmer", "role": "platform_admin"},
+    })
+    app.dependency_overrides[current_identity] = lambda: identity
+    try:
+        linked = client.post("/api/v1/auth/onboard", headers={"Authorization": "Bearer confirmed-session"})
+        assert linked.status_code == 200
+        assert linked.json()["id"] == str(legacy_user_id)
+        assert linked.json()["created"] is False
+        assert linked.json()["roles"] == ["farmer"]
+        assert client.get("/api/v1/me", headers={"Authorization": "Bearer confirmed-session"}).json()["id"] == str(legacy_user_id)
+    finally:
+        app.dependency_overrides.pop(current_identity, None)
+
+    link = db_session.get(SupabaseIdentityLink, supabase_user_id)
+    assert link is not None
+    assert link.user_id == legacy_user_id
+
+
+def test_supabase_onboarding_will_not_claim_a_staff_email(client, monkeypatch, db_session):
+    from app import main
+    from app.models import User, UserRole
+
+    staff_id = uuid4()
+    supabase_user_id = uuid4()
+    staff_email = "vet@example.test"
+    db_session.add(User(id=staff_id, display_name="Clinic Vet", email=staff_email))
+    db_session.add(UserRole(user_id=staff_id, role="veterinarian"))
+    db_session.commit()
+
+    identity = {"sub": str(supabase_user_id), "demo": False}
+    monkeypatch.setattr(settings, "supabase_url", "https://terravanta-test.supabase.co")
+    monkeypatch.setattr(settings, "supabase_anon_key", "test-publishable-key")
+    monkeypatch.setattr(main, "verified_supabase_user", lambda token, subject: {
+        "id": str(subject), "email": staff_email, "email_confirmed_at": "2026-01-01T00:00:00Z",
+        "user_metadata": {"full_name": "Impersonator"},
+    })
+    app.dependency_overrides[current_identity] = lambda: identity
+    try:
+        result = client.post("/api/v1/auth/onboard", headers={"Authorization": "Bearer confirmed-session"})
+        assert result.status_code == 409
+    finally:
+        app.dependency_overrides.pop(current_identity, None)
+    assert db_session.query(UserRole).filter_by(user_id=supabase_user_id, role="farmer").first() is None
+
+
 def test_demo_login_requires_explicit_synthetic_data_flag(client, monkeypatch):
     monkeypatch.setattr(settings, "enable_synthetic_data", False)
     assert client.post("/api/v1/auth/demo-login?role=farmer").status_code == 404

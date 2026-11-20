@@ -1,34 +1,34 @@
 # Terravanta project proposal
 
-## Receivables assurance across agricultural supply chains
+## The processor receivables close for agricultural suppliers
 
-**Version:** 0.2 · **Date:** 18 November 2026 · **Status:** Draft for partner and funder discussion
+**Version:** 0.3 · **Date:** 18 November 2026 · **Status:** Pilot proposal; commercial hypothesis unvalidated
 **Initial market:** Kenyan dairy cooperatives and processors
-**Important:** All records currently shown in the demonstration are synthetic. No cooperative has validated or purchased this service.
+**Evidence boundary:** Demo records are synthetic. No cooperative has authorized a real claim, no processor response has been recorded, and no buyer has purchased a repeat close.
 
 ## 1. Executive summary
 
-Terravanta proposes to validate a system-agnostic receivables assurance service for dairy cooperatives. For each processor settlement period, it will assemble the cooperative’s seller-side claim from contract terms, delivery/acceptance records, processor statements, quality adjustments and actual cash receipts; keep seller assertion, buyer confirmation, disputed value and received cash separate; age any remaining balance against a reviewed contractual due date; and prepare a source-linked claim or lender-diligence pack. It will not decide legal entitlement, originate credit, or initiate payments.
+Terravanta is being repositioned as a **processor-receivables close service** for agricultural suppliers, starting with dairy cooperatives. Each close turns authorized contract, supply, acceptance, adjustment, invoice/statement and cash evidence into a reviewed register that says what the cooperative asserts is owed, what the processor confirms or disputes, what has actually been received, and what remains open against a reviewed due date. Terravanta prepares the follow-up and evidence work product; cooperative staff retain claim approval and escalation decisions, processors own their responses, and lenders own credit decisions.
 
-The commercial thesis is that a cooperative, processor or finance institution may pay to reduce the recurring labor and uncertainty of proving, responding to, or diligencing a processor receivable. This remains a hypothesis. DairyCore and eDairy already advertise broad dairy MIS capabilities; ZuriCap and SWAFI describe agricultural invoice finance; and Mastercard/Heifer/KCB are digitizing dairy transactions and enabling payment/finance. Terravanta cannot win on records, reconciliation, or faster payment as generic categories. Its candidate edge is a neutral, cross-system evidence graph and authenticated counterparty response that existing systems do not already deliver for a specific buyer.
+The customer buys a completed, review-ready close and claim-operation workflow, not another dashboard or AI copilot. This is a hypothesis about recurring labor and accountability, not a claim that Terravanta can make an insolvent or cash-constrained processor pay. It must first distinguish evidence mismatch, processor dispute, and acknowledged-but-unpaid arrears. Existing dairy MIS providers already advertise collection, quality, invoices, member payout and overdue-account workflows; invoice-finance providers already offer early payment. The only credible entry point is the cross-system exception that those tools do not resolve for a specific customer: source-linked proof, a recorded counterparty position, and a usable open-receivable record.
 
-The repository contains farm, veterinary, crop, feed, production, delivery and consent workflows plus a member payout-close CSV workflow. An additive receivables schema foundation is being introduced for counterparties, versioned source mappings/contracts, private evidence artifacts, seller claim lines/cases, buyer confirmations, inbound cash receipts/allocations and case events. This is not yet a receivables application workflow: no claim API, evidence-pack export, processor connector, counterparty portal, real-cooperative validation or paid customer exists. All demo records are synthetic. Production retention, file security and support controls require completion before live member or financial data is handled.
+The repository now has a working manual receivables vertical slice: cooperative claim register, private evidence uploads, itemized claim lines, processor response workflow, reviewed-date aging, receipt allocation, evidence export, and a recorded paid-repeat decision. It is not an automatic close: no MIS/processor/bank adapter or source-file reconciliation engine exists, and processor accounts are provisioned through an operator workflow. All demo records remain synthetic. Security operations, data retention, malware scanning, backup/restore and live-data authorization must be reviewed before a real claim is imported.
 
-This proposal requests a **phased validation project**, not an unbounded agricultural platform rollout. First interview cooperative claims/finance, processor accounts payable and a receivables financier separately. If a specific gap is proven, use one authorized, retrospective processor-period claim to measure assembly effort, evidence coverage, buyer response, disputed value and financing usefulness. Proceed to a paid repeat only if one named budget owner selects it and delivery economics are viable.
+This proposal requests a **bounded commercial pilot**, not an unbounded agricultural platform rollout: validate one cooperative–processor relationship, reconstruct one authorized retrospective claim, obtain and record the processor’s response, measure current and Terravanta staff effort, then ask the actual budget owner to buy the next close. Proceed only if the incumbent leaves a material gap, the evidence trail is trusted, the repeat has a named buyer and price unit, and the service can be delivered at viable cost.
 
 ## 2. Project purpose and decision requested
 
-**Purpose:** Determine whether cross-party receivables proof and claim operations are a recurring, costly job, whether the buyer values a neutral evidence workflow, and whether a multi-party-confirmed record can be delivered with proper authority, privacy and sustainable service cost.
+**Purpose:** Determine whether producing and working a processor receivables close is a recurring service worth buying, whether Terravanta can complete the evidence and exception work with less repeated effort than the current process, and whether a processor response makes the resulting record useful beyond the cooperative.
 
 **Decision requested from a pilot sponsor:**
 
-1. Nominate the cooperative owner of processor receivables and the finance/records staff who assemble or pursue a claim.
-2. Allow an initial workflow interview without member-level data; separately introduce a processor AP contact and a lender/receivables-finance operations contact.
-3. If a specific gap exists, agree authority, confidentiality, source scope, baseline, retention/deletion plan, decision date and paid-pilot route before any files move.
-4. Review a one-period claim pack with the cooperative and seek a recorded processor response; ask a lender whether the confirmed evidence changes diligence effort or eligibility.
-5. Make a priced repeat decision with the budget owner. Stop if the incumbent already solves the job or the processor will not respond and no buyer values a seller-side pack.
+1. Nominate the cooperative finance/claims owner and the staff who assemble, check, chase or finance processor receivables today.
+2. Walk through a recent close using the cooperative’s real system and exceptions; introduce the processor AP reviewer and, separately, a lender operations contact.
+3. Agree the baseline, data authority, minimized source scope, transfer method, retention/deletion plan and success threshold before files move.
+4. Reconstruct one completed or overdue processor-period claim; have the cooperative approve its assertion and invite the authorized processor to confirm, partly confirm, dispute or request information.
+5. Present the measured work and ask the budget owner to approve a priced repeat. Stop or reposition if the incumbent already performs this job or the customer will not pay for it.
 
-There is no amount requested in this draft. A credible budget requires the pilot duration, partner requirements, approved deployment environment, staff effort and secure data-handling costs to be known first.
+No grant or implementation amount is requested in this draft. A paid pilot quote should follow discovery and state the processor-period scope, source onboarding, review labor, security controls and service-level boundaries. The commercial test is whether the customer pays for the next close, not whether it likes the prototype.
 
 ## 3. Market problem and entry wedge
 
@@ -50,11 +50,23 @@ Start with one cooperative/processor relationship where the cooperative:
 
 If the current system already assembles, ages and resolves processor receivables with acceptable staff effort, Terravanta should not sell a duplicate workflow to that customer.
 
+### Buyer, user and beneficiary hypothesis
+
+| Seat | Likely organization / role | Job in the first close | What must be verified |
+| --- | --- | --- | --- |
+| Primary buyer hypothesis | Cooperative general manager, finance lead or board-authorized budget owner | Funds the recurring close service because their staff must assemble, defend and follow up on the cooperative's receivable | A real budget line, procurement route, claims frequency and willingness to pay for a repeat close |
+| Daily user | Cooperative accountant, finance officer or claims/records staff | Supplies source files, reviews the asserted claim, resolves exceptions and approves the evidence pack | Current labor, rework, tools already used and who has authority to submit a claim |
+| Counterparty reviewer | Processor accounts-payable or supplier-finance team | Confirms, partially accepts, disputes or requests information on the cooperative's claim | Whether the processor will participate and whether this reduces its own exception work |
+| Possible second buyer | Receivables lender, bank or invoice-finance operations team | Uses an authorized, processor-responded evidence pack for diligence | Whether it pays for evidence preparation and what confirmed facts change its diligence—not just its credit decision |
+| Beneficiary | Cooperative members / suppliers | Gain a clearer claim status and evidence trail; may benefit if the cooperative or a financier acts | Member value and data-sharing expectations; do not promise earlier payment |
+
+The first commercial conversation should start with the cooperative because it owns the claim and source authority. The lender may have more liquidity to deploy but is not the primary buyer until it names a budget and signs for a paid workflow. Processors may have lower incentive to buy a supplier-side claim system; test AP value independently. This is a buyer hypothesis, not a market fact.
+
 ## 4. Proposed service and offer
 
-### Terravanta Receivables Assurance
+### Terravanta Processor Receivables Close
 
-For every agreed settlement period, Terravanta’s proposed managed service will:
+For each contracted cooperative–processor period, Terravanta’s service is intended to:
 
 1. Receive authorized contract, supply/acceptance, invoice or statement, quality-adjustment and cash-receipt evidence through a private channel.
 2. Apply versioned mappings and retain the original file hash plus each normalized row/page locator.
@@ -62,57 +74,58 @@ For every agreed settlement period, Terravanta’s proposed managed service will
 4. Calculate aging only against a human-reviewed due date linked to the contract term; unknown terms remain unknown.
 5. Route a claim to an authorized counterparty for a recorded acceptance, partial acceptance, dispute or information request.
 6. Allocate documented inbound cash receipts to the claim; produce a reviewed collection or lender diligence pack under explicit sharing permission.
-7. Record staff effort, evidence gaps, response time and eventual outcome to price a repeat service.
+7. Deliver the completed register, exception queue and evidence pack to an authorized cooperative reviewer, while recording effort, evidence gaps, processor response and eventual outcome.
 
-**Offer to test:** “For each processor settlement period, we assemble a source-linked receivables register showing each cooperative claim, counterparty response, open balance, contractual due date and days overdue, then prepare a reviewed evidence pack for collection or finance diligence; priced per counterparty-period with source onboarding scoped separately.” This is a service hypothesis, not a published price, promise of faster payment, recovery, financing, or return.
+**Offer to test:** “We close your processor receivables every settlement period: we reconcile the authorized supply, acceptance, adjustment and cash evidence into a reviewed register of confirmed, disputed, paid and aging balances, then prepare the claim and follow-up pack for a fixed fee per processor-period, with source onboarding scoped separately.” This is a service hypothesis, not a published price or a promise of faster payment, recovery, financing, or return. The MVP still requires staff to map sources and review exceptions; unattended automation is a later product target, not a current capability.
 
 ### Work retained by the cooperative
 
-The cooperative owns and attests its claim and its records. The processor owns its response. A named user reviews due-date terms, evidence links, cash allocation and exports. A lender makes its own underwriting and financing decision. Terravanta will not determine legal entitlement, certify a debt from seller uploads, modify either party's ledger, release or route funds, originate loans, send automatic legal demands, or override a reviewer.
+The cooperative owns and attests its claim and records; the processor owns its response. Named users review contractual due-date terms, evidence links, cash allocations and the final claim pack. The system performs repeatable evidence preparation and case administration; it does not make a legal determination or bind either party. Terravanta will not modify source ledgers, release or route funds, originate loans, send automatic legal demands, or override a reviewer. A lender retains every underwriting and funding decision.
 
 ## 5. Product scope
 
 ### First paid-job scope (after validation)
 
-- One processor-period claim, one cooperative and one counterparty relationship.
+- One cooperative–processor relationship and a defined settlement-period receivables close; use one retrospective claim first, then price the repeat close.
 - Contract version/payment term, cooperative supply evidence, buyer acceptance/statement, quality/deduction basis and actual receipts where available.
 - Deterministic source mapping and matching; no fuzzy identity merge or model-generated financial facts.
 - Seller-asserted, buyer-confirmed, disputed and received amounts shown separately with claim age based on reviewed due date.
 - Evidence pack with immutable source hashes and row/page references, redacted for the specific recipient.
-- One counterparty response step and a paid-repeat decision; setup and support labor measured as delivery cost.
+- A processor response workflow, cooperative approval, receipt allocation and paid-repeat decision; setup and support labor measured as delivery cost.
 
 ### Supporting product layer
 
-Farmers can keep farm, animal, health, crop, feed, production and delivery records in a private farm workspace. Veterinarians can review assigned clinical records and verify their own findings. A cooperative sees only the expressly shared delivery-summary scope; private veterinary records are excluded by default. This connected record can improve provenance and farmer utility, but the receivables workflow should not depend on farmers re-entering a delivery already captured by the cooperative or processor.
+Farmers can keep farm, animal, health, crop, feed, production and delivery records in a private farm workspace. Veterinarians can review assigned clinical records and verify their own findings. A cooperative sees only the expressly shared delivery-summary scope; private veterinary records are excluded by default. This connected record can improve provenance and farmer utility, but is not the initial buyer proposition and must not require farmers to re-enter deliveries already captured by the cooperative or processor.
 
 ### Out of scope for the first commercial pilot
 
 - Replacing an existing cooperative MIS or point-of-collection workflow.
-- Any named connector until a customer-authorized source export and repeat demand exist.
+- Any named connector until an authorized sample, repeat demand and a reusable integration case exist.
 - Editing source ledgers, initiating payouts, originating advances or sending automatic legal demands.
 - AI deciding a financial fact, adjudicating a claim, confirming a contract term or approving an evidence pack.
 - AI diagnosis, treatment or food-safety certification.
 - Lending, insurance, buyer marketplaces or sale of farm data.
-- Any claim of reduced fraud, payment error, losses or labor without a measured baseline.
+- Any claim of reduced arrears, faster payment, fraud, payment error, losses or labor without a measured baseline and credible causal path.
 
 ## 6. Product readiness: implemented versus proposed
 
 | Area | Implemented in this repository | Still required for a real pilot |
 | --- | --- | --- |
 | Member payout close | Three CSV imports, deterministic volume/amount checks, evidence-linked exceptions, reviewer notes, named approval and member statement-pack export | This is cooperative-to-member payable reconciliation; it does not prove the processor owes the cooperative |
-| Receivables assurance | Additive SQLAlchemy/Alembic foundation for counterparty relationships, mapping/contract versions, private evidence metadata, seller claim lines/cases, buyer confirmations, cash receipts/allocations and case events | API, private object-storage integration, evidence upload/review, due-date rules, buyer portal, aging register, exports and a real confirmed claim are not implemented |
-| Source systems | Existing normalized CSV contracts for intake reconciliation and member payout close | No named receivable, processor, MIS, bank or mobile-money adapter |
-| Statements and money | Member payout-close CSV is available after cooperative approval | No processor claim evidence pack, incoming receipt allocation workflow, ledger write-back, payment rail, loan, or payment authorization |
+| Receivables close | Cooperative claim register and API; source evidence upload; claim lines and assertion; processor response path; reviewed-date aging; receipt allocation; evidence ZIP export; paid-repeat decision record | Automatic source reconciliation, import adapters, contract management UI, self-service processor onboarding, verified budget-owner decision, real processor response, real claim and paid repeat |
+| Evidence storage | Private PDF/CSV storage on the configured private volume or S3-compatible backend; server-generated keys, file size/type validation, hash verification on download | Malware scanning, automated retention/deletion, restore drill, and live-data handling review; do not upload real claims before these are agreed |
+| Source systems | Manual claim entry and evidence attachment; separate member payout-close CSV workflow | No named receivables, processor MIS, bank or mobile-money adapter; no automatic source-file matching |
+| Statements and money | Claim balance state distinguishes seller assertion, processor response and cash receipts; receipts can be allocated to cases; export is source-linked | No processor ledger write-back, payment rail, loan, collection guarantee, or payment authorization |
 | Farm and veterinary | Farm, plots, animals, health events, verification, production, feed, resource cycle, delivery and consent workflows | Real account configuration, field workflow validation and operational support |
 | AI | Backend provider abstraction and opt-in veterinary draft/document extraction paths | Live NVIDIA account validation, approved references, veterinarian evaluation and data-term review; AI is not needed for the close |
-| Data protection and operations | Server-enforced role and consent checks, audit trail, synthetic data off by default | Dedicated pilot environment, agreed retention/deletion process, tested backups, monitoring, incident response and real-data access review |
+| Data protection and operations | Server-enforced roles and organization scoping, consent checks for farm sharing, audit trail, synthetic data off by default | Written authority and minimized source scope; retention/deletion; backup/restore, malware scanning, monitoring, incident response and access review for real financial data |
 | Offline use | Single-browser offline POST queue | Encryption, broader offline coverage, conflict handling and multi-device synchronization |
 
-All included farm and cooperative demo entities are synthetic. A public deployment or successful build does not prove market demand, production readiness or a real customer relationship.
+All included farm, cooperative and claim examples are synthetic. A public deployment or successful build does not prove market demand, a real processor response, payment impact or a paying customer relationship.
 
 ## 7. Delivery architecture
 
-Receivables assurance is a distinct bounded context from the existing member payable close. It keeps immutable source artifacts and append-only events separate from normalized assertions, buyer confirmations and observed cash. AI is not part of the first claim workflow and cannot confirm financial facts or contract terms.
+Processor receivables close is a distinct bounded context from the existing cooperative-to-member payable close. The first is the cooperative’s claim against its processor; the second is the cooperative’s payable to members. The application keeps uploaded source artifacts and append-only case events separate from cooperative assertions, processor responses and observed cash. AI is not in the financial decision path and cannot create or confirm a financial fact, contractual term or claim.
 
 ```mermaid
 flowchart LR
@@ -137,7 +150,7 @@ flowchart LR
   Buyer --> Audit
 ```
 
-The current stack is Next.js/TypeScript, FastAPI, SQLAlchemy/Alembic and PostgreSQL/PostGIS, with Supabase Auth. The migration and ORM are only the database foundation; the receivable API and client are future implementation. The existing settlement service remains intact and addresses downstream member payouts. Before live financial data is used, enforce same-tenant composite links, check service authorization for seller and counterparty roles, integrate private object storage and malware scanning, implement retention/deletion, and review backups/access. Source files and amounts may remain confidential or re-identifiable after pseudonymization.
+The current stack is Next.js/TypeScript, FastAPI, SQLAlchemy/Alembic and PostgreSQL/PostGIS, with server-enforced organization roles. Receivables API routes and a manual claim workbench are implemented; operator tooling provisions processor organizations and users. Evidence files use private persistent storage or a configured private S3-compatible backend. The system validates upload type and size, assigns non-guessable storage keys and verifies file hashes on retrieval. Before real financial data is used, the cooperative and Terravanta must agree authority, least-privilege access, data minimization, retention/deletion, backups/restore, malware scanning, monitoring and incident response. Source files and amounts may remain confidential or re-identifiable after pseudonymization.
 
 For Kenyan data protection, confirm Terravanta’s and the cooperative’s controller/processor roles, lawful basis, notice, retention and registration obligations with qualified counsel or the ODPC before the pilot. The ODPC describes controller/processor registration and rights obligations in its current guidance and FAQs. [ODPC guidance on registration](https://www.odpc.go.ke/faqs/), [ODPC data-protection framework](https://odpc.go.ke/data-protection-laws-kenya/)
 
@@ -171,34 +184,36 @@ Capture the baseline before using Terravanta. Keep elapsed claim-assembly/respon
 
 ### Initial revenue hypothesis
 
-1. Test a fixed fee per counterparty-period claim file / reviewed evidence pack; avoid a percentage of funds recovered or farmer data sales.
-2. Charge separately for customer-specific mapping and onboarding until reuse makes it unnecessary.
-3. Move to a recurring organization/volume service contract only after repeated usage, a budget owner and delivery-cost evidence.
-4. Test a lender-sponsored evidence workflow only if a lender says which source/confirmation gaps it will pay to remove and signs data-access terms.
-5. Keep farm/vet recordkeeping sponsored or free during validation unless direct willingness to pay is demonstrated.
+1. Sell the completed work product: a reviewed processor-period close with the claim register, response/dispute state, aging and evidence pack. Test a fixed fee per processor-period; do not price as generic seats or dashboards.
+2. Charge separately for one-time source onboarding while mappings are customer-specific; reduce this only as measured reuse reduces labor.
+3. Move to a recurring close-operations contract only after repeat usage, a named budget owner and actual delivery-cost evidence.
+4. Test a lender-sponsored diligence workflow only if a lender identifies the specific source or confirmation work it will fund and signs data-access terms. Do not assume it wants a claim register simply because it finances receivables.
+5. Keep farm and veterinary recordkeeping separate from the initial close price unless a buyer demonstrates that the records reduce close cost or independently wants to pay for them.
 
-For each case, measure revenue minus mapping labor, counterparty follow-up, evidence review, onboarding, field support, infrastructure, storage, security and third-party costs. A recurring service is viable only if the paying buyer can name the budget and measured benefit, and margin improves as mappings and claim operations are reused. Do not quote a price before discovery.
+For each close, measure revenue minus source onboarding, mapping and exception review, counterparty follow-up, approval coordination, field support, infrastructure, storage, security and third-party costs. A recurring service is viable only if a named buyer identifies a budget and a measured job to remove, while labor per close falls as trusted mappings and exception rules are reused. Do not quote a price before discovery.
 
 ### Scale path
 
-- **One relationship, one claim:** prove reconstruction and actual counterparty response manually from authorized exports.
-- **Repeat the same relationship:** version terms and mappings, automate deterministic evidence links, aging and reminder queues.
-- **Second cooperative/processor relationship:** test onboarding reuse and whether the same canonical evidence/response protocol works across systems.
-- **One adapter at a time:** build a named MIS, processor or cash-source connector only after authorized samples and paid repeat demand.
-- **Expand the farm record layer:** support consented delivery provenance and farmer utility; add veterinary, feed and crop workflows where active customers request them and use can be measured.
-- **Add AI selectively:** test model-assisted column mapping or exception summaries against deterministic output, with human acceptance, logs and external-processing permission. Keep money decisions and clinical judgment with qualified people.
+- **One relationship, one retrospective claim:** use authorized minimized exports; prove source coverage, claim assembly time, actual processor response and reviewer trust.
+- **Repeat the same close:** charge for the next period; measure whether the service completes a review-ready close with fewer manual minutes and acceptable support cost.
+- **Second relationship:** reuse the canonical evidence and response protocol without founder-led custom cleanup; this tests whether there is a scalable product rather than a bespoke service bureau.
+- **One adapter at a time:** build a named MIS, processor or cash-source connector only after lawful access to representative samples and a paid repeat case.
+- **Adjacent sectors only after dairy repeatability:** consider other agricultural suppliers with similar settlement evidence and buyer confirmation needs; do not broaden to all agriculture by analogy.
+- **Supporting farm layer:** add or surface farm, delivery and veterinary records only when they reduce evidence gaps, acquisition cost or close labor for the paying customer.
+- **AI only where it reduces review time:** test document/column extraction against deterministic records with a human confirming every financial field; AI remains optional and outside claim adjudication, legal interpretation and clinical decisions.
 
 ### Potential moat—not yet established
 
-The moat could come from a permissioned and auditable evidence graph linking contracts, accepted supply, claims, authenticated buyer responses, cash allocations and outcomes, alongside reusable mappings and reliable claim operations. The current codebase has no live receivables API/UI, named connector, counterparty confirmation or validated outcome data; the schema foundation alone creates no moat. Customer data is not a moat by default and must not be pooled or used for external model training without valid permission.
+The candidate moat has four parts: (1) source adapters and a canonical settlement-event model that make heterogeneous systems comparable; (2) field-level provenance from contract, accepted supply, adjustments and receipts into every claim amount; (3) authenticated bilateral response and append-only claim history; and (4) reusable close operations that reduce exception labor while retaining an auditable record of later outcomes. Together they could make Terravanta the neutral claim-operations layer between systems that remain in place. That is a moat hypothesis, not a current advantage. The MVP has the manual case, response and evidence workflow but no named production adapter, real counterparty confirmation or outcome history. A single cooperative's uploaded spreadsheets are not defensibility; neither is raw farm data. Customer data remains isolated and cannot be pooled or used for model training without valid permission. The moat exists only if mappings are reused, counterparties participate, customers pay for repeats and service cost falls without weakening evidence quality.
 
 ## 11. Team, budget and operating needs
 
-The initial project needs clear owners for:
+The initial pilot needs clear owners for:
 
 - cooperative claims discovery, processor AP engagement, lender discovery and a named budget decision;
-- backend engineering for private evidence intake, source mappings, contract/claim events and tenant isolation;
-- cooperative and processor operations for claim review and counterparty response;
+- source onboarding and deterministic reconciliation engineering;
+- cooperative claim operations and processor AP response;
+- product/security operations for private evidence, role access, retention and restore;
 - security, data protection, contracts and retention/deletion review;
 - customer operations during claim assembly, processor response and result measurement.
 
@@ -236,9 +251,9 @@ Each assumption requires direct evidence. If any first four fail for several sui
 
 ## 14. Recommendation
 
-Proceed with a narrow three-seat discovery and retrospective receivable reconstruction. Do not market Terravanta as a payment rail, lender, cooperative MIS, legal debt-certification service or proven moat. Test whether one cooperative needs a source-linked claim file, whether a processor will confirm/dispute it, and whether a cooperative/processor/lender budget owner will pay to repeat it. If these conditions fail, keep the current payout close as a supporting feature and change the wedge before adding broad AI or more farmer modules.
+Proceed with one bounded **processor receivables close** pilot. Position Terravanta as a service that does the recurring evidence and claim-operations work around arrears—not as a new cooperative MIS, payout rail, lender, legal debt-certification service or generic AI copilot. The system should complete the repeatable preparation and follow-up tasks; named cooperative, processor and lender users retain the decisions and risks that belong to them. Measure whether one cooperative’s current tools leave a costly cross-system exception, whether the processor responds to a source-linked claim, and whether the real budget owner pays for a repeat. If those conditions fail, stop or change the buyer/problem before building more modules.
 
-The next concrete action is to secure separate discovery conversations with one cooperative claims/finance owner, one processor AP owner and one lender or invoice-finance operations owner. No member data is needed for these conversations. The [pilot kit](COOPERATIVE_PILOT_KIT.md) contains discovery preparation; the [receivables assurance contract](RECEIVABLES_ASSURANCE.md) defines the product boundary, data model, status semantics and pilot gates.
+The immediate commercial milestone is to secure one cooperative claims/finance owner willing to walk through a completed processor close, then identify that cooperative’s processor AP reviewer and budget owner. No member data is needed for this first conversation. Only after the workflow gap and authority are clear should Terravanta ask for an anonymized retrospective export. The pilot kit contains the interview guide, baseline worksheet and file-safety checklist; the receivables assurance document describes the implemented workflow and technical limits.
 
 ## References and related project documents
 
