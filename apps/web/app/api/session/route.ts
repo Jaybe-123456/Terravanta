@@ -28,11 +28,17 @@ export async function POST(request: NextRequest) {
   if (!sameOrigin(request)) return NextResponse.json({ detail: "Request origin is not allowed" }, { status: 403 });
   if (!configuredAuth()) return NextResponse.json({ detail: "Supabase Auth is not configured" }, { status: 503 });
   const body = await request.json().catch(() => null);
-  if (typeof body?.refresh_token !== "string" || body.refresh_token.length < 20 || body.refresh_token.length > 4096) {
-    return NextResponse.json({ detail: "A valid session refresh token is required" }, { status: 422 });
+  const refreshToken = typeof body?.refresh_token === "string" ? body.refresh_token : "";
+  // Supabase refresh tokens are opaque provider values. Do not impose a guessed
+  // minimum length; the Auth service validates the token when it is refreshed.
+  if (!refreshToken.trim() || refreshToken.length > 4096) {
+    return NextResponse.json(
+      { detail: "Supabase did not provide a usable refresh token. Sign in again or request a new recovery link." },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
   }
   const response = NextResponse.json({ stored: true }, { headers: { "Cache-Control": "no-store" } });
-  response.cookies.set(refreshCookie, body.refresh_token, cookieOptions(request));
+  response.cookies.set(refreshCookie, refreshToken, cookieOptions(request));
   return response;
 }
 

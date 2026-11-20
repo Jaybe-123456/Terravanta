@@ -131,7 +131,10 @@ async function storeSupabaseRefreshToken(refreshToken: string): Promise<void> {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }), cache: "no-store",
   });
-  if (!response.ok) throw new Error("Could not secure the session in this browser. Request a new recovery email.");
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.detail || "Could not secure the session in this browser. Sign in again or request a new recovery email.");
+  }
 }
 
 export async function persistSession(session: Session): Promise<void> {
