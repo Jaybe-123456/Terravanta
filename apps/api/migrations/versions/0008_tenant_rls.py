@@ -46,8 +46,14 @@ def upgrade() -> None:
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'terravanta_app') THEN
                 CREATE ROLE terravanta_app NOLOGIN INHERIT NOBYPASSRLS;
             END IF;
+            IF EXISTS (
+                SELECT 1 FROM pg_roles
+                WHERE rolname = 'terravanta_app'
+                  AND (rolcanlogin OR rolbypassrls OR NOT rolinherit)
+            ) THEN
+                RAISE EXCEPTION 'terravanta_app must be NOLOGIN INHERIT NOBYPASSRLS; correct the role before applying tenant RLS';
+            END IF;
         END $$;
-        ALTER ROLE terravanta_app NOLOGIN INHERIT NOBYPASSRLS;
         GRANT USAGE ON SCHEMA public TO terravanta_app;
         REVOKE CREATE ON SCHEMA public FROM PUBLIC;
     """)

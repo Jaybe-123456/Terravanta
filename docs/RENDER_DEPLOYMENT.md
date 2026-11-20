@@ -45,7 +45,7 @@ FROM pg_roles
 WHERE rolname IN ('terravanta_app', 'terravanta_runtime');
 ```
 
-For each role that does not already exist, run the corresponding `CREATE ROLE` command below. If it exists, use the matching `ALTER ROLE` command instead. Then grant membership and set the runtime password using psql's hidden prompt:
+Create either role only if it does not already exist. The migration checks that `terravanta_app` is `NOLOGIN`, inherits privileges, and does not bypass RLS; it intentionally does not alter an existing role because Render's managed database owner cannot change the `BYPASSRLS` attribute. Confirm existing role attributes with the query above. Then grant membership and set the runtime password using psql's hidden prompt:
 
 ```sql
 CREATE ROLE terravanta_app NOLOGIN INHERIT NOBYPASSRLS;
@@ -59,7 +59,7 @@ In that same interactive psql session, run the psql command separately; it is no
 \password terravanta_runtime
 ```
 
-When `terravanta_app` exists, use `ALTER ROLE terravanta_app NOLOGIN INHERIT NOBYPASSRLS;` in place of its create command. When `terravanta_runtime` exists, use `ALTER ROLE terravanta_runtime LOGIN INHERIT NOBYPASSRLS;` in place of its create command. Keep the grants and run `\password terravanta_runtime` separately. Paste the clipboard value twice at psql's hidden prompts. This keeps the password out of SQL text and psql history. Render CLI setup and `psql` access are documented by [Render](https://render.com/docs/cli); PostgreSQL documents `\password` as the way to change a role password without exposing it in command history.
+When either role already exists, do not rerun its `CREATE ROLE` command. Confirm that `terravanta_app` has `rolcanlogin = false`, `rolbypassrls = false`, and `rolinherit = true`; confirm that `terravanta_runtime` has `rolcanlogin = true`, `rolbypassrls = false`, and is a member of `terravanta_app`. If an attribute is wrong, stop and resolve it with the database administrator before deploying. Run `\password terravanta_runtime` separately. Paste the clipboard value twice at psql's hidden prompts. This keeps the password out of SQL text and psql history. Render CLI setup and `psql` access are documented by [Render](https://render.com/docs/cli); PostgreSQL documents `\password` as the way to change a role password without exposing it in command history.
 
 Keep the current `DATABASE_URL` while preparing the role. Deploy the commit containing migration `0008_tenant_rls` with `MIGRATIONS_DATABASE_URL` still set to the database owner, then wait for the Render logs to confirm `alembic upgrade head` succeeded. Only then change the API's `DATABASE_URL` to the restricted runtime login and redeploy. This avoids restarting the pre-migration API with a login that does not yet have the migrated table grants and policies.
 
