@@ -1,27 +1,31 @@
 # Terravanta explainer and Terras
 
-## Cooperative close explainer
+## Cooperative receivables explainer
 
-The HyperFrames composition lives in `media/terravanta-explainer`. It tells one concrete story: import the collection, processor settlement, and farmer payout exports; compare member rows; review exceptions; record cooperative sign-off; export the statement pack. It does not imply that Terravanta initiates a payment or that live cooperative results exist. All member identifiers and visual rows in the film are illustrative and synthetic.
+The editable HyperFrames project lives in `media/terravanta-explainer`. Six timed sub-compositions tell one workflow: a remaining cooperative claim; manual PDF/CSV evidence intake; separate seller-asserted and processor-confirmed values; age from a user-reviewed due date; a role-attributed processor response; and a private evidence export. Figures and dates are explicitly synthetic. The film does not claim a real customer result, a live MIS connector, legal validation, payment movement or recovered funds. The export illustration shows original evidence, response history and an SHA-256 integrity manifest; a hash detects file changes but does not prove source truth.
 
-The project pins HyperFrames CLI `0.9.58` and uses local GSAP. It has no external media, network-loaded assets, or model-generated narration. `generate_asset.py` is prepared to produce first-party 3D export-stack artwork when Blender is installed; Blender is not available in this build environment, so the current composition uses a native SVG illustration. The narration script is in `media/terravanta-explainer/VOICEOVER_SCRIPT.md`; its audio is intentionally absent until the founder supplies a clean recording and a rotated ElevenLabs credential is stored outside the repository.
+The project uses local GSAP, the actual Terravanta leaf mark and no model-generated media. The composition is silent because the founder has not yet supplied a recording. A draft written for the founder's own voice is in `media/terravanta-explainer/VOICEOVER_SCRIPT.md`; the key previously pasted in chat must be revoked and is not used.
 
-From the repository root, prepare and check the film:
+From the repository root, use the installed HyperFrames launcher with a project-local cache in PowerShell:
 
 ```powershell
 Set-Location media/terravanta-explainer
-npm install
-npm run check
-npx --yes hyperframes@0.9.58 snapshot --at 3,9,15,21,27
+$env:HYPERFRAMES_CACHE_DIR = Join-Path (Get-Location) '.tools\hyperframes-cache'
+$env:npm_config_cache = Join-Path (Get-Location) '.tools\npm-cache'
+$env:HYPERFRAMES_FFMPEG_PATH = Join-Path (Get-Location) '.tools\node_modules\ffmpeg-static\ffmpeg.exe'
+$env:HYPERFRAMES_FFPROBE_PATH = Join-Path (Get-Location) '.tools\node_modules\ffprobe-static\bin\win32\x64\ffprobe.exe'
+$hf = Join-Path $env:USERPROFILE '.agents\skills\hyperframes\scripts\plugin-cli.mjs'
+node $hf check --json
+node $hf snapshot --review
+node $hf preview --background
+node $hf preview --status --json
+node $hf render --quality delivery --output '..\..\apps\web\public\videos\terravanta-receivables-assurance.mp4'
+& $env:HYPERFRAMES_FFMPEG_PATH -y -ss 1 -i '..\..\apps\web\public\videos\terravanta-receivables-assurance.mp4' -frames:v 1 -update 1 '..\..\apps\web\public\videos\terravanta-receivables-assurance-poster.png'
 ```
 
-The composition's scene frames were captured and reviewed with HyperFrames. On this Windows host, HyperFrames' native MP4 render could not start Chrome's headless process, and its pinned-browser download could not resolve `storage.googleapis.com`. The reviewed frames are kept in `assets/frames` so the silent preview can be reproduced without that browser install. After FFmpeg and FFprobe are available, assemble them into the dashboard asset:
+The dashboard consumes `apps/web/public/videos/terravanta-receivables-assurance.mp4` and its matching poster. The player is embedded in cooperative, farmer, veterinarian and processor views so a user can discover the product explainer without changing roles. The cooperative overview, processor claims inbox and farmer/veterinarian overview pages show the film; cooperative users can also reach it from the claims workflow.
 
-```powershell
-npm run render:reviewed
-```
-
-The rendered preview is H.264 at 1280×720, 24 fps, with slow scene movement, crossfades, no audio track, and synthetic-data framing. FFprobe verifies codec, dimensions, frame rate and duration. The dashboard video is embedded on the cooperative Close desk with controls and a poster image. Keep the rendered film in `apps/web/public/videos`; keep local tool binaries in the ignored `.tools` folder. Set `FFMPEG_PATH` and `FFPROBE_PATH` if binaries are installed elsewhere. The requested preview is silent until the founder's narration track is recorded and approved.
+The Windows render used the installed HyperFrames 0.9.72 launcher with FFmpeg and FFprobe configured in the launching PowerShell session. Set `HYPERFRAMES_FFMPEG_PATH` and `HYPERFRAMES_FFPROBE_PATH` when those tools are not discoverable on `PATH`. The six reviewed scene snapshots can be assembled with `node render_from_reviewed_frames.mjs` only if the native renderer cannot encode.
 
 ## Web deployment output
 

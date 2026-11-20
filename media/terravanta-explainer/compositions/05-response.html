@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #f2f5f1; color: #19382a; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    .top { position: absolute; left: 112px; right: 112px; top: 46px; height: 58px; display: flex; align-items: center; border-bottom: 1px solid #d9e1d8; }
+    .brand { display: flex; align-items: center; gap: 13px; font-size: 28px; font-weight: 730; letter-spacing: -0.7px; }
+    .brand img { width: 42px; height: 42px; }
+    .brand small { display: block; margin-top: 3px; color: #66736a; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+    .stamp { margin-left: auto; padding: 10px 13px; border: 1px solid #c6d2c4; color: #516456; font-size: 28px; font-weight: 700; letter-spacing: 1px; }
+    .copy { position: absolute; left: 128px; top: 274px; width: 605px; }
+    .eyebrow { margin: 0 0 25px; color: #637569; font-size: 28px; font-weight: 740; letter-spacing: 1.6px; }
+    h1 { margin: 0 0 25px; max-width: 620px; color: #19382a; font-size: 67px; line-height: 1.04; letter-spacing: -2.7px; font-weight: 660; }
+    .sub { margin: 0; max-width: 560px; color: #57665c; font-size: 28px; line-height: 1.4; }
+    .panel { position: absolute; left: 760px; top: 203px; width: 1035px; height: 665px; border: 1px solid #d8e1d8; background: #fff; }
+    .panel-head { height: 90px; padding: 24px 31px; border-bottom: 1px solid #e0e7df; display: flex; align-items: center; justify-content: space-between; }
+    .panel-head span { color: #67766a; font-size: 19px; font-weight: 740; letter-spacing: 1px; }
+    .panel-head strong { display: block; margin-top: 6px; font-size: 28px; font-weight: 690; }
+    .response-ref { color: #657469; font-size: 20px; }
+    .panel-body { display: grid; grid-template-columns: .9fr 1.1fr; height: 573px; }
+    .claim-side { padding: 30px 34px; border-right: 1px solid #e0e7df; background: #f8faf7; }
+    .label { color: #6c796f; font-size: 19px; font-weight: 730; letter-spacing: 1px; }
+    .amount { margin-top: 28px; color: #19382a; font-size: 41px; font-weight: 690; letter-spacing: -1.5px; }
+    .amount small { display: block; margin-top: 4px; color: #68766c; font-size: 19px; font-weight: 500; letter-spacing: 0; }
+    .remaining { margin-top: 33px; padding: 17px 18px; border-left: 4px solid #b98225; background: #fff; }
+    .remaining span { color: #6b766d; font-size: 18px; }
+    .remaining strong { display: block; margin-top: 6px; color: #95671e; font-size: 32px; }
+    .response-side { padding: 31px 35px; }
+    .partial { display: inline-block; margin: 22px 0 24px; padding: 10px 13px; border: 1px solid #a9c4a9; color: #315f3c; font-size: 28px; font-weight: 760; letter-spacing: 1px; }
+    .response-title { margin: 0; font-size: 31px; font-weight: 680; }
+    .response-note { margin: 13px 0 24px; color: #5e6b61; font-size: 28px; line-height: 1.35; }
+    .saved { margin-top: 20px; color: #315f3c; font-size: 28px; font-weight: 700; }
+    .foot { position: absolute; left: 112px; bottom: 39px; color: #667369; font-size: 20px; }
+  </style>
+  <div id="root" class="clip" data-composition-id="claim-response" data-start="0" data-duration="6" data-width="1920" data-height="1080">
+    <header class="top"><div class="brand"><img src="assets/terravanta-mark.svg" alt="" /><span>Terravanta<small data-layout-ignore>FARM INTELLIGENCE</small></span></div><span class="stamp">SYNTHETIC EXAMPLE</span></header>
+    <section class="copy"><p class="eyebrow">COUNTERPARTY RESPONSE</p><h1>Keep the processor's answer with the claim.</h1><p class="sub">A named processor user records a position, reference and response note. The open difference stays visible.</p></section>
+    <section class="panel"><div class="panel-head"><div><span data-layout-ignore>SUPPLIER CLAIM INBOX</span><strong>Example claim</strong></div><span class="response-ref" data-layout-ignore>RESPONSE PR-EX-008</span></div><div class="panel-body"><div class="claim-side"><span class="label" data-layout-ignore>COOPERATIVE ASSERTION</span><div class="amount">KES 248,600<small data-layout-ignore>Seller-asserted amount</small></div><div id="response-remaining" class="remaining"><span data-layout-ignore>Unresolved difference</span><strong>KES 57,200</strong></div></div><div class="response-side"><span class="label" data-layout-ignore>PROCESSOR POSITION</span><div id="response-status" class="partial">PARTIALLY CONFIRMED</div><h2 class="response-title">KES 191,400 recorded</h2><p id="response-note" class="response-note">Saved to claim history.</p><p class="saved">A response is not payment.</p></div></div></section>
+    <footer class="foot" data-layout-ignore>No payment is moved · the cooperative and processor retain their own decisions.</footer>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+    tl.fromTo("#response-status", { scaleX: 0.7, opacity: 0 }, { scaleX: 1, opacity: 1, transformOrigin: "left center", duration: 0.3 }, 0.55);
+    tl.fromTo("#response-note", { clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)", duration: 0.55 }, 1.15);
+    tl.fromTo("#response-remaining", { borderLeftWidth: 0 }, { borderLeftWidth: 4, duration: 0.2 }, 1.65);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["claim-response"] = tl;
+  </script>
+</template>

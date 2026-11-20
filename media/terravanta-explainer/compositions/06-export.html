@@ -1,0 +1,44 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #f2f5f1; color: #19382a; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    .top { position: absolute; left: 112px; right: 112px; top: 46px; height: 58px; display: flex; align-items: center; border-bottom: 1px solid #d9e1d8; }
+    .brand { display: flex; align-items: center; gap: 13px; font-size: 28px; font-weight: 730; letter-spacing: -0.7px; }
+    .brand img { width: 42px; height: 42px; }
+    .brand small { display: block; margin-top: 3px; color: #66736a; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+    .stamp { margin-left: auto; padding: 10px 13px; border: 1px solid #c6d2c4; color: #516456; font-size: 28px; font-weight: 700; letter-spacing: 1px; }
+    .copy { position: absolute; left: 128px; top: 248px; width: 755px; }
+    .eyebrow { margin: 0 0 25px; color: #637569; font-size: 28px; font-weight: 740; letter-spacing: 1.6px; }
+    h1 { margin: 0 0 24px; max-width: 750px; color: #19382a; font-size: 67px; line-height: 1.04; letter-spacing: -2.7px; font-weight: 660; }
+    .sub { margin: 0; max-width: 690px; color: #57665c; font-size: 29px; line-height: 1.4; }
+    .cta { margin-top: 31px; padding: 17px 0 0; border-top: 1px solid #cfd9ce; color: #315f3c; font-size: 30px; font-weight: 730; }
+    .measure { margin-top: 10px; max-width: 710px; color: #66736a; font-size: 28px; line-height: 1.35; }
+    .pack { position: absolute; left: 1000px; top: 214px; width: 710px; height: 740px; }
+    .sheet { position: absolute; width: 615px; height: 670px; border: 1px solid #d8e1d8; background: #fff; }
+    .sheet.back { left: 62px; top: 14px; background: #e7ede6; }
+    .sheet.mid { left: 30px; top: 31px; background: #f6f8f5; }
+    .sheet.front { left: 0; top: 48px; padding: 32px 36px; box-shadow: 0 20px 40px #16372510; }
+    .sheet-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 19px; border-bottom: 1px solid #e2e8e1; }
+    .sheet-head strong { font-size: 28px; font-weight: 690; }
+    .zip-tag { color: #65766a; font-size: 18px; font-weight: 700; letter-spacing: 1px; }
+    .pack-title { margin: 24px 0 8px; font-size: 30px; font-weight: 680; }
+    .pack-sub { margin: 0; color: #6a776d; font-size: 20px; }
+    .pack-row { height: 48px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #e8ede7; color: #43564a; font-size: 28px; }
+    .check { width: 22px; height: 22px; display: inline-grid; place-items: center; border: 1px solid #80a486; color: #315f3c; font-size: 17px; font-weight: 750; }
+    .integrity { margin-top: 21px; padding: 13px 15px; border-left: 4px solid #315f3c; background: #f2f6f1; color: #56675b; font-size: 28px; line-height: 1.28; }
+    .integrity strong { color: #315f3c; }
+    .foot { position: absolute; left: 112px; bottom: 39px; color: #667369; font-size: 20px; }
+  </style>
+  <div id="root" class="clip" data-composition-id="claim-export" data-start="0" data-duration="6" data-width="1920" data-height="1080">
+    <header class="top"><div class="brand"><img src="assets/terravanta-mark.svg" alt="" /><span>Terravanta<small data-layout-ignore>FARM INTELLIGENCE</small></span></div><span class="stamp">SYNTHETIC EXAMPLE</span></header>
+    <section class="copy"><p class="eyebrow">MAKE THE NEXT STEP EVIDENCE-READY</p><h1>One claim. Its age. Each response. The source files.</h1><p class="sub">Export a private case pack that keeps the cooperative's assertion separate from the processor's response.</p><p class="cta">Start with one anonymized completed period.</p><p class="measure">Measure preparation time, exception rework and processor response time. Ask a budget owner whether a priced repeat is worth it.</p></section>
+    <div class="pack"><div class="sheet back"></div><div class="sheet mid"></div><article id="export-front" class="sheet front"><div class="sheet-head"><strong>Evidence export</strong><span class="zip-tag" data-layout-ignore>PRIVATE ZIP</span></div><h2 class="pack-title">Receivable claim pack</h2><p class="pack-sub" data-layout-ignore>Case TV-EXAMPLE-0042 · synthetic</p><div class="pack-row"><i class="check" data-layout-ignore>✓</i>Claim and itemized position</div><div class="pack-row"><i class="check" data-layout-ignore>✓</i>Processor response history</div><div class="pack-row"><i class="check" data-layout-ignore>✓</i>Reviewed aging basis</div><div class="pack-row"><i class="check" data-layout-ignore>✓</i>Original evidence files</div><div class="pack-row"><i class="check" data-layout-ignore>✓</i>SHA-256 integrity manifest</div><div class="integrity"><strong>File integrity recorded.</strong> A hash checks whether a stored file changed; it does not prove the source document is true.</div></article></div>
+    <footer class="foot" data-layout-ignore>No payment is initiated · no recovery is guaranteed · no real customer outcome is claimed.</footer>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+    tl.fromTo("#export-front", { y: 36 }, { y: 0, duration: 0.5 }, 0.35);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["claim-export"] = tl;
+  </script>
+</template>

@@ -1,0 +1,43 @@
+<template>
+  <style>
+    #root { position: absolute; inset: 0; overflow: hidden; background: #f2f5f1; color: #19382a; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    .top { position: absolute; left: 112px; right: 112px; top: 46px; height: 58px; display: flex; align-items: center; border-bottom: 1px solid #d9e1d8; }
+    .brand { display: flex; align-items: center; gap: 13px; font-size: 28px; font-weight: 730; letter-spacing: -0.7px; }
+    .brand img { width: 42px; height: 42px; }
+    .brand small { display: block; margin-top: 3px; color: #66736a; font-size: 12px; font-weight: 700; letter-spacing: 2px; }
+    .stamp { margin-left: auto; padding: 10px 13px; border: 1px solid #b98225; color: #845916; font-size: 28px; font-weight: 750; letter-spacing: 1px; }
+    .copy { position: absolute; left: 128px; top: 252px; width: 690px; }
+    .eyebrow { margin: 0 0 25px; color: #637569; font-size: 28px; font-weight: 740; letter-spacing: 1.6px; }
+    h1 { margin: 0 0 25px; max-width: 710px; color: #19382a; font-size: 76px; line-height: 1.03; letter-spacing: -3px; font-weight: 660; }
+    .sub { margin: 0; max-width: 650px; color: #57665c; font-size: 29px; line-height: 1.38; }
+    .compare { position: absolute; left: 860px; top: 222px; width: 930px; height: 610px; display: grid; grid-template-columns: 1fr 1fr; gap: 26px; align-items: center; }
+    .record { height: 520px; padding: 35px 34px; border: 1px solid #d8e1d8; background: #fff; box-shadow: 0 18px 42px #1637250d; }
+    .record .record-label { color: #65766a; font-size: 28px; font-weight: 730; letter-spacing: 1.2px; }
+    .record h2 { margin: 28px 0 8px; font-size: 29px; font-weight: 680; letter-spacing: -0.7px; }
+    .record .period { color: #6c7a71; font-size: 21px; }
+    .record .amount { margin-top: 75px; color: #19382a; font-size: 53px; font-weight: 700; letter-spacing: -2px; white-space: nowrap; }
+    .record .amount-caption { margin-top: 7px; color: #59685e; font-size: 28px; }
+    .record .rule { margin-top: 42px; height: 1px; background: #e0e7df; }
+    .record .source { margin-top: 24px; color: #58675d; font-size: 21px; line-height: 1.42; }
+    .record.processor { margin-top: 58px; }
+    .foot { position: absolute; left: 112px; bottom: 39px; color: #667369; font-size: 20px; }
+  </style>
+  <div id="root" class="clip" data-composition-id="claim-opening" data-start="0" data-duration="6" data-width="1920" data-height="1080">
+    <header class="top"><div class="brand"><img src="assets/terravanta-mark.svg" alt="" /><span>Terravanta<small data-layout-ignore>FARM INTELLIGENCE</small></span></div><span class="stamp">SYNTHETIC EXAMPLE</span></header>
+    <section class="copy"><p class="eyebrow">COOPERATIVE RECEIVABLES</p><h1>A close ends.<br />A claim may remain.</h1><p class="sub">The finance team needs one answer: what is asserted, confirmed and still unresolved?</p><div id="opening-callout" style="margin-top:32px;padding-left:17px;border-left:4px solid #b98225;color:#845916;font-size:28px;font-weight:700;opacity:0">Open difference · KES 57,200</div></section>
+    <div class="compare">
+      <article id="opening-coop-record" class="record"><span class="record-label">COOPERATIVE CLAIM</span><h2>Settlement period</h2><span class="period" data-layout-ignore>Illustrative period</span><div class="amount">KES 248,600</div><div class="amount-caption">Seller-asserted amount</div><div class="rule"></div><p class="source" data-layout-ignore>Claim amount attributed to a cooperative submission.</p></article>
+      <article id="opening-processor-record" class="record processor"><span class="record-label">PROCESSOR RESPONSE</span><h2>Recorded position</h2><span class="period" data-layout-ignore>Same illustrative period</span><div class="amount">KES 191,400</div><div class="amount-caption">Partially confirmed</div><div class="rule"></div><p class="source" data-layout-ignore>The remaining difference stays open for review.</p></article>
+    </div>
+    <footer class="foot" data-layout-ignore>All names, amounts and records in this film are fictional.</footer>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.out" } });
+    tl.fromTo("#opening-coop-record", { x: -48 }, { x: 0, duration: 0.6 }, 0.3);
+    tl.fromTo("#opening-processor-record", { x: 48 }, { x: 0, duration: 0.6 }, 0.55);
+    tl.fromTo("#opening-callout", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.35 }, 3.0);
+    window.__timelines = window.__timelines || {};
+    window.__timelines["claim-opening"] = tl;
+  </script>
+</template>
