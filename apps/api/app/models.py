@@ -196,6 +196,52 @@ class AnimalHealthEvent(Base):
     status: Mapped[str] = mapped_column(String(32), default="open")
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (UniqueConstraint("id", "farm_id", name="uq_animal_health_event_id_farm"),)
+
+
+class AnimalHealthFollowUp(Base):
+    """Append-only veterinarian record of an attempted or completed case follow-up."""
+    __tablename__ = "animal_health_follow_ups"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    health_event_id: Mapped[object] = mapped_column(Uuid, nullable=False)
+    recorded_by: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id"), nullable=False)
+    recorded_by_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    follow_up_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    occurred_on: Mapped[object] = mapped_column(Date, nullable=False)
+    clinical_outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    case_disposition: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    treatment_adherence: Mapped[str] = mapped_column(String(24), default="unknown", nullable=False)
+    care_plan_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    next_follow_up_on: Mapped[object | None] = mapped_column(Date, nullable=True)
+    case_cost_to_date_kes: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    case_cost_source: Mapped[str] = mapped_column(String(24), default="not_recorded", nullable=False)
+    milk_price_kes_per_liter: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    milk_price_source: Mapped[str] = mapped_column(String(24), default="not_recorded", nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["health_event_id", "farm_id"],
+            ["animal_health_events.id", "animal_health_events.farm_id"],
+            ondelete="CASCADE",
+            name="fk_health_follow_up_event_farm",
+        ),
+        CheckConstraint("follow_up_status IN ('completed', 'missed', 'unable_to_reach')", name="ck_health_follow_up_status"),
+        CheckConstraint("clinical_outcome IS NULL OR clinical_outcome IN ('resolved', 'improving', 'unchanged', 'worsened', 'referred', 'deceased', 'not_assessed')", name="ck_health_follow_up_outcome"),
+        CheckConstraint("case_disposition IS NULL OR case_disposition IN ('closed_recovered', 'continue_follow_up', 'referred', 'closed_other')", name="ck_health_follow_up_disposition"),
+        CheckConstraint("(follow_up_status = 'completed' AND clinical_outcome IS NOT NULL AND case_disposition IS NOT NULL) OR (follow_up_status <> 'completed' AND clinical_outcome IS NULL AND case_disposition IS NULL)", name="ck_health_follow_up_outcome_required"),
+        CheckConstraint("(case_disposition = 'closed_recovered' AND clinical_outcome = 'resolved') OR (case_disposition = 'closed_other' AND clinical_outcome = 'deceased') OR (case_disposition = 'referred' AND clinical_outcome = 'referred') OR (case_disposition = 'continue_follow_up' AND clinical_outcome NOT IN ('deceased', 'referred')) OR case_disposition IS NULL", name="ck_health_follow_up_disposition_consistent"),
+        CheckConstraint("((follow_up_status <> 'completed' OR case_disposition IN ('continue_follow_up', 'referred')) AND next_follow_up_on IS NOT NULL) OR (follow_up_status = 'completed' AND case_disposition IN ('closed_recovered', 'closed_other') AND next_follow_up_on IS NULL)", name="ck_health_follow_up_next_date"),
+        CheckConstraint("treatment_adherence IN ('as_directed', 'partially_followed', 'not_started', 'unknown')", name="ck_health_follow_up_adherence"),
+        CheckConstraint("case_cost_to_date_kes IS NULL OR case_cost_to_date_kes >= 0", name="ck_health_follow_up_cost_nonnegative"),
+        CheckConstraint("(case_cost_to_date_kes IS NULL AND case_cost_source = 'not_recorded') OR (case_cost_to_date_kes IS NOT NULL AND case_cost_source = 'farmer_reported')", name="ck_health_follow_up_cost_source_matches"),
+        CheckConstraint("case_cost_source IN ('not_recorded', 'farmer_reported')", name="ck_health_follow_up_cost_source"),
+        CheckConstraint("milk_price_kes_per_liter IS NULL OR milk_price_kes_per_liter > 0", name="ck_health_follow_up_milk_price_positive"),
+        CheckConstraint("(milk_price_kes_per_liter IS NULL AND milk_price_source = 'not_recorded') OR (milk_price_kes_per_liter IS NOT NULL AND milk_price_source = 'farmer_reported')", name="ck_health_follow_up_milk_source_matches"),
+        CheckConstraint("milk_price_source IN ('not_recorded', 'farmer_reported')", name="ck_health_follow_up_milk_source"),
+        Index("ix_health_follow_ups_farm_event_date", "farm_id", "health_event_id", "occurred_on"),
+    )
 
 
 class ClinicalObservation(Base):

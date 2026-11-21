@@ -1,5 +1,6 @@
 import re
 from datetime import date
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -66,6 +67,50 @@ class HealthEventCreate(BaseModel):
     def follow_up_follows_event(self):
         if self.follow_up_on and self.follow_up_on < self.occurred_on:
             raise ValueError("Follow-up date cannot precede the health event")
+        return self
+
+
+class HealthFollowUpCreate(BaseModel):
+    follow_up_status: Literal["completed", "missed", "unable_to_reach"]
+    occurred_on: date
+    clinical_outcome: Literal["resolved", "improving", "unchanged", "worsened", "referred", "deceased", "not_assessed"] | None = None
+    case_disposition: Literal["closed_recovered", "continue_follow_up", "referred", "closed_other"] | None = None
+    treatment_adherence: Literal["as_directed", "partially_followed", "not_started", "unknown"] = "unknown"
+    care_plan_summary: str = Field(default="", max_length=2000)
+    next_follow_up_on: date | None = None
+    case_cost_to_date_kes: Decimal | None = Field(default=None, ge=0, le=9999999999.99)
+    milk_price_kes_per_liter: Decimal | None = Field(default=None, gt=0, le=100000)
+    notes: str = Field(default="", max_length=2000)
+
+    @model_validator(mode="after")
+    def outcome_and_next_step_are_consistent(self):
+        if self.follow_up_status == "completed":
+            if self.clinical_outcome is None or self.case_disposition is None:
+                raise ValueError("A completed follow-up requires a clinical outcome and case disposition")
+            if self.clinical_outcome == "deceased" and self.case_disposition != "closed_other":
+                raise ValueError("A deceased outcome must be closed as a non-recovery")
+            if self.case_disposition == "closed_other" and self.clinical_outcome != "deceased":
+                raise ValueError("Close as non-recovery only when the recorded outcome is deceased")
+            if self.case_disposition == "closed_recovered" and self.clinical_outcome != "resolved":
+                raise ValueError("A recovered case can be closed only with a resolved outcome")
+            if self.case_disposition == "referred" and self.clinical_outcome != "referred":
+                raise ValueError("A referred case must record a referred clinical outcome")
+            if self.clinical_outcome == "referred" and self.case_disposition != "referred":
+                raise ValueError("A referred clinical outcome requires a referral disposition")
+        elif self.clinical_outcome is not None or self.case_disposition is not None:
+            raise ValueError("An incomplete follow-up cannot record a clinical outcome or disposition")
+        elif len(self.notes.strip()) < 3:
+            raise ValueError("Add a short note explaining why the follow-up was missed or not completed")
+
+        needs_next_date = self.follow_up_status != "completed" or self.case_disposition in {"continue_follow_up", "referred"}
+        if needs_next_date and self.next_follow_up_on is None:
+            raise ValueError("Record the next follow-up date when the case remains open")
+        if not needs_next_date and self.next_follow_up_on is not None:
+            raise ValueError("A closed case cannot have another scheduled follow-up")
+        if self.notes.strip() != self.notes:
+            self.notes = self.notes.strip()
+        if self.care_plan_summary.strip() != self.care_plan_summary:
+            self.care_plan_summary = self.care_plan_summary.strip()
         return self
 
 

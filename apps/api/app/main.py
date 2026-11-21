@@ -26,7 +26,7 @@ from .ai import nvidia, parse_structured, safe_case_response
 from .config import settings
 from .db import AdminSessionLocal, Base, admin_engine, engine, get_admin_db, get_db
 from .models import (
-    AIRequest, AIResponse, Animal, AnimalHealthEvent, AuditLog, Buyer, CompostApplication,
+    AIRequest, AIResponse, Animal, AnimalHealthEvent, AnimalHealthFollowUp, AuditLog, Buyer, CompostApplication,
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
     FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot, SupabaseIdentityLink,
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, SettlementClose, SettlementCloseItem, User, UserRole,
@@ -34,7 +34,7 @@ from .models import (
 from .schemas import (
     AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
-    ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
+    HealthFollowUpCreate, ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
     SettlementApproveCreate, SettlementReviewCreate,
     TerrasRouteRequest,
 )
@@ -46,6 +46,12 @@ from .receivables import router as receivables_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("terravanta")
+KENYA_TIMEZONE = timezone(timedelta(hours=3))
+
+
+def farm_today() -> date:
+    """Kenyan farm event dates are local calendar dates; service timestamps remain UTC."""
+    return datetime.now(KENYA_TIMEZONE).date()
 
 
 def initialize_database():
@@ -252,9 +258,9 @@ def dashboard(user: User = Depends(current_user), db: Session = Depends(get_scop
     farm = primary_farm(db, user)
     animals = db.query(Animal).filter_by(farm_id=farm.id).count()
     open_cases = db.query(AnimalHealthEvent).filter_by(farm_id=farm.id, status="open").count()
-    due_events = db.query(AnimalHealthEvent).filter(AnimalHealthEvent.farm_id == farm.id, AnimalHealthEvent.follow_up_on <= date.today() + timedelta(days=7), AnimalHealthEvent.status == "open").count()
+    due_events = db.query(AnimalHealthEvent).filter(AnimalHealthEvent.farm_id == farm.id, AnimalHealthEvent.follow_up_on <= farm_today() + timedelta(days=7), AnimalHealthEvent.status == "open").count()
     feed_kg = db.query(func.coalesce(func.sum(FeedBatch.quantity_kg), 0)).filter_by(farm_id=farm.id).scalar()
-    milk = db.query(ProductionRecord).filter(ProductionRecord.farm_id == farm.id, ProductionRecord.product_type == "milk", ProductionRecord.recorded_on >= date.today() - timedelta(days=6)).order_by(ProductionRecord.recorded_on.desc()).all()
+    milk = db.query(ProductionRecord).filter(ProductionRecord.farm_id == farm.id, ProductionRecord.product_type == "milk", ProductionRecord.recorded_on >= farm_today() - timedelta(days=6)).order_by(ProductionRecord.recorded_on.desc()).all()
     weekly = {}
     for row in reversed(milk):
         weekly[row.recorded_on.isoformat()] = round(row.quantity, 1)
@@ -371,6 +377,154 @@ def health_history(animal_id: UUID, user: User = Depends(current_user), db: Sess
         raise HTTPException(404, "Animal not found")
     farm_access(db, user, animal.farm_id)
     return [dump(row) for row in db.query(AnimalHealthEvent).filter_by(animal_id=animal.id).order_by(AnimalHealthEvent.occurred_on.desc()).all()]
+
+
+def milk_productivity_context(db: Session, event: AnimalHealthEvent, follow_up: AnimalHealthFollowUp) -> dict:
+    """Descriptive, unadjusted animal-milk comparison; it does not estimate treatment effect or ROI."""
+    baseline_start, baseline_end = event.occurred_on - timedelta(days=7), event.occurred_on - timedelta(days=1)
+    post_start, post_end = follow_up.occurred_on + timedelta(days=1), follow_up.occurred_on + timedelta(days=7)
+    records = db.query(ProductionRecord).filter(
+        ProductionRecord.farm_id == event.farm_id,
+        ProductionRecord.animal_id == event.animal_id,
+        func.lower(ProductionRecord.product_type) == "milk",
+        func.lower(ProductionRecord.unit).in_(["l", "liter", "liters", "litre", "litres"]),
+        ProductionRecord.recorded_on >= baseline_start,
+        ProductionRecord.recorded_on <= post_end,
+    ).all()
+    by_day: dict[date, float] = {}
+    for record in records:
+        by_day[record.recorded_on] = by_day.get(record.recorded_on, 0.0) + float(record.quantity)
+
+    def summarize(start: date, end: date) -> dict:
+        observed = [liters for day, liters in by_day.items() if start <= day <= end]
+        observed.sort()
+        return {
+            "from": start.isoformat(), "through": end.isoformat(),
+            "days_with_records": len(observed), "recorded_liters": round(sum(observed), 2),
+            "mean_liters_per_recorded_day": round(sum(observed) / len(observed), 2) if observed else None,
+        }
+
+    baseline, post = summarize(baseline_start, baseline_end), summarize(post_start, post_end)
+    windows_observable = baseline["days_with_records"] >= 3 and post["days_with_records"] >= 3
+    post_window_complete = post_end <= farm_today()
+    available = windows_observable and post_window_complete
+    change = None
+    percent_change = None
+    daily_value_rate_change = None
+    if available:
+        change = round(post["mean_liters_per_recorded_day"] - baseline["mean_liters_per_recorded_day"], 2)
+        if baseline["mean_liters_per_recorded_day"]:
+            percent_change = round(change / baseline["mean_liters_per_recorded_day"] * 100, 1)
+        if follow_up.milk_price_kes_per_liter is not None:
+            daily_value_rate_change = round(change * float(follow_up.milk_price_kes_per_liter), 2)
+    return {
+        "comparison_available": available,
+        "comparison_basis": "7 recorded calendar days before the health event vs. 7 recorded calendar days after this follow-up",
+        "baseline": baseline,
+        "post_follow_up": post,
+        "unadjusted_change_liters_per_recorded_day": change,
+        "unadjusted_change_percent": percent_change,
+        "estimated_daily_gross_milk_value_rate_change_kes": daily_value_rate_change,
+        "farmgate_price_source": follow_up.milk_price_source,
+        "interpretation": "Descriptive association only. Recording coverage, lactation, feed, season, concurrent illness and other factors are not controlled. This is not a treatment effect, additional revenue, or ROI.",
+    }
+
+
+@app.get("/api/v1/farms/{farm_id}/health-events")
+def farm_health_events(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    farm = farm_access(db, user, farm_id)
+    events = db.query(AnimalHealthEvent).filter_by(farm_id=farm.id).order_by(AnimalHealthEvent.occurred_on.desc()).limit(200).all()
+    result = []
+    for event in events:
+        animal = db.get(Animal, event.animal_id)
+        follow_ups = db.query(AnimalHealthFollowUp).filter_by(farm_id=farm.id, health_event_id=event.id).order_by(AnimalHealthFollowUp.occurred_on.desc(), AnimalHealthFollowUp.created_at.desc()).all()
+        result.append({
+            **dump(event),
+            "animal_name": animal.name if animal else "Unknown animal",
+            "animal_tag": animal.tag if animal else "",
+            "follow_up_count": len(follow_ups),
+            "follow_ups": [dump(item) for item in follow_ups],
+        })
+    return result
+
+
+@app.get("/api/v1/health-events/{event_id}/follow-ups")
+def list_health_follow_ups(event_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    event = db.get(AnimalHealthEvent, event_id)
+    if not event:
+        raise HTTPException(404, "Health event not found")
+    farm_access(db, user, event.farm_id)
+    follow_ups = db.query(AnimalHealthFollowUp).filter_by(farm_id=event.farm_id, health_event_id=event.id).order_by(AnimalHealthFollowUp.occurred_on.desc(), AnimalHealthFollowUp.created_at.desc()).all()
+    return {
+        "health_event_id": str(event.id),
+        "follow_ups": [
+            {**dump(item), "milk_productivity_context": milk_productivity_context(db, event, item) if item.follow_up_status == "completed" else None}
+            for item in follow_ups
+        ],
+    }
+
+
+@app.post("/api/v1/health-events/{event_id}/follow-ups", status_code=201)
+def create_health_follow_up(event_id: UUID, body: HealthFollowUpCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    event = db.get(AnimalHealthEvent, event_id)
+    if not event:
+        raise HTTPException(404, "Health event not found")
+    farm = farm_access(db, user, event.farm_id)
+    require_role(db, user, "veterinarian")
+    vet_membership = db.query(FarmMember).filter_by(farm_id=farm.id, user_id=user.id, role="veterinarian").first()
+    if not vet_membership:
+        raise HTTPException(403, "Only the veterinarian assigned to this farm can record clinical follow-up")
+    if event.status != "open":
+        raise HTTPException(409, "This health case is closed. Create a new health event if the animal needs care again.")
+    if body.occurred_on < event.occurred_on:
+        raise HTTPException(422, "Follow-up date cannot precede the health event")
+    if body.occurred_on > farm_today():
+        raise HTTPException(422, "A follow-up date cannot be in the future")
+    previous = db.query(AnimalHealthFollowUp).filter_by(farm_id=farm.id, health_event_id=event.id).order_by(AnimalHealthFollowUp.occurred_on.desc(), AnimalHealthFollowUp.created_at.desc()).first()
+    if previous and body.occurred_on < previous.occurred_on:
+        raise HTTPException(422, "Follow-up records must be added in chronological order")
+    if body.next_follow_up_on and body.next_follow_up_on <= body.occurred_on:
+        raise HTTPException(422, "The next follow-up must be after this visit or contact")
+
+    row = AnimalHealthFollowUp(
+        farm_id=farm.id,
+        health_event_id=event.id,
+        recorded_by=user.id,
+        recorded_by_name=user.display_name,
+        follow_up_status=body.follow_up_status,
+        occurred_on=body.occurred_on,
+        clinical_outcome=body.clinical_outcome,
+        case_disposition=body.case_disposition,
+        treatment_adherence=body.treatment_adherence,
+        care_plan_summary=body.care_plan_summary,
+        next_follow_up_on=body.next_follow_up_on,
+        case_cost_to_date_kes=body.case_cost_to_date_kes,
+        case_cost_source="farmer_reported" if body.case_cost_to_date_kes is not None else "not_recorded",
+        milk_price_kes_per_liter=body.milk_price_kes_per_liter,
+        milk_price_source="farmer_reported" if body.milk_price_kes_per_liter is not None else "not_recorded",
+        notes=body.notes,
+    )
+    db.add(row)
+    if body.follow_up_status != "completed" or body.case_disposition in {"continue_follow_up", "referred"}:
+        event.follow_up_on = body.next_follow_up_on
+        event.status = "open"
+    elif body.case_disposition == "closed_recovered":
+        event.follow_up_on = None
+        event.status = "resolved"
+    elif body.case_disposition == "closed_other":
+        event.follow_up_on = None
+        event.status = "closed"
+    db.flush()
+    audit(db, user, "health_follow_up.recorded", "animal_health_follow_up", str(row.id), farm.id, {
+        "follow_up_status": row.follow_up_status,
+        "clinical_outcome": row.clinical_outcome,
+        "case_disposition": row.case_disposition,
+    })
+    db.commit()
+    db.refresh(row)
+    result = dump(row)
+    result["milk_productivity_context"] = milk_productivity_context(db, event, row) if row.follow_up_status == "completed" else None
+    return result
 
 
 @app.post("/api/v1/animals/{animal_id}/health-events", status_code=201)
@@ -1062,7 +1216,7 @@ def cooperative_deliveries(user: User = Depends(current_user), db: Session = Dep
 
 
 def build_alerts(db: Session, farm: Farm) -> list[dict]:
-    today = date.today()
+    today = farm_today()
     alerts = []
     events = db.query(AnimalHealthEvent).filter(AnimalHealthEvent.farm_id == farm.id, AnimalHealthEvent.status == "open", AnimalHealthEvent.follow_up_on.is_not(None), AnimalHealthEvent.follow_up_on <= today + timedelta(days=7)).all()
     for event in events:
