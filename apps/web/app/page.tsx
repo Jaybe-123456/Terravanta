@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, Eye, EyeOff, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, Eye, EyeOff, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
@@ -69,6 +69,7 @@ export default function Home() {
   const [coopDeliveries, setCoopDeliveries] = useState<AnyRecord[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AnyRecord[]>([]);
   const [activeReconciliation, setActiveReconciliation] = useState<AnyRecord | null>(null);
+  const [receivableFocusId, setReceivableFocusId] = useState("");
   const [settlementCloses, setSettlementCloses] = useState<AnyRecord[]>([]);
   const [activeSettlementClose, setActiveSettlementClose] = useState<AnyRecord | null>(null);
   const [cooperatives, setCooperatives] = useState<AnyRecord[]>([]);
@@ -499,7 +500,8 @@ export default function Home() {
   }
 
   const toFarm = (path: string) => `/api/v1/farms/${farmId}${path}`;
-  const onNav = (section: Section) => { setActive(section); setMobileNav(false); };
+  const onNav = (section: Section) => { if (section === "receivables") setReceivableFocusId(""); setActive(section); setMobileNav(false); };
+  const openReceivable = (caseId: string) => { setReceivableFocusId(caseId); setActive("receivables"); setMobileNav(false); };
   const isCoop = role === "cooperative_admin";
   const isProcessor = role === "processor_admin";
   const farmLabel = farm?.name || "Farm workspace";
@@ -522,7 +524,7 @@ export default function Home() {
 
         {loading && token ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
         {workspaceError && !loading ? <div className="workspace-load-error" role="alert"><div><strong>Some workspace data could not be loaded</strong><p>{workspaceError}</p></div><button type="button" className="button button-outline" onClick={() => void reload()}><RefreshCw size={14} />Retry</button></div> : null}
-        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /></> : null}
+        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} initialCaseId={receivableFocusId} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} onOpenReceivable={openReceivable} token={token} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /></> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -570,7 +572,7 @@ function SignInScreen({ demoMode, passwordRecovery, busy, error, message, onSubm
 
 function sectionTitle(section: Section, coop: boolean, role: string) {
   if (role === "processor_admin") return ({ receivables: "Supplier claim inbox", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Processor workspace";
-  if (coop) return ({ overview: "Settlement close desk", settlements: "Milk payout settlements", receivables: "Processor receivables", traceability: "Consented member records", reports: "Settlement history", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Cooperative operations";
+  if (coop) return ({ overview: "Claims & payout desk", settlements: "Milk payout settlements", receivables: "Processor receivables", traceability: "Consented member records", reports: "Settlement history", settings: "Access & controls" } as Partial<Record<Section, string>>)[section] || "Cooperative operations";
   if (role === "veterinarian") return ({ overview: "Assigned case desk", farms: "Assigned farm records", veterinary: "Clinical case review", assistant: "Veterinary case assistant", reports: "Review activity", settings: "Workspace settings" } as Partial<Record<Section, string>>)[section] || "Veterinary workspace";
   return ({ overview: "Your farm, at a glance", farms: "Farm identity & passport", veterinary: "Herd health records", crops: "Crops & land use", feed: "Feed & resource cycle", production: "Production records", traceability: "Traceability & sharing", assistant: "Veterinary intelligence", settlements: "Payout settlements", receivables: "Processor claims", reports: "Farm reports", settings: "Workspace settings" } as Record<Section, string>)[section];
 }
@@ -578,7 +580,7 @@ function sectionTitle(section: Section, coop: boolean, role: string) {
 function sectionDescription(section: Section, farmName?: string, coop = false, role = "farmer") {
   if (role === "processor_admin") return section === "settings" ? "Processor workspace access and review responsibilities." : "Review cooperative claims, record your AP position, and leave a traceable response for the seller.";
   if (coop) return ({
-    overview: "See the latest payout close, unresolved reviews and the next action for your finance team.",
+    overview: "Work the processor receivables queue and payout-close exceptions from one cooperative desk.",
     settlements: "Reconcile your source exports, resolve evidence-linked exceptions and approve a reviewable close.",
     receivables: "Build an evidence-backed claim against a processor, age amounts from reviewed terms and record the counterparty response.",
     traceability: "Review delivery summaries shared by farm owners and keep source links visible.",
@@ -760,8 +762,8 @@ function SettingsView({ role, userName, farm, passport, online, queued }: AnyRec
   return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
 }
 
-function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, activeClose, busy, importFile, openRun, reviewItem, createClose, openClose, reviewException, approveClose, downloadPack, onNavigate }: AnyRecord) {
-  if (section === "overview") return <CooperativeOverview closes={closes} deliveries={deliveries} onNavigate={onNavigate} openClose={openClose} />;
+function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, activeClose, busy, importFile, openRun, reviewItem, createClose, openClose, reviewException, approveClose, downloadPack, onNavigate, onOpenReceivable, token }: AnyRecord) {
+  if (section === "overview") return <CooperativeOverview closes={closes} deliveries={deliveries} onNavigate={onNavigate} onOpenReceivable={onOpenReceivable} openClose={openClose} token={token} />;
   if (section === "settlements") return <SettlementCloseWorkbench closes={closes} activeClose={activeClose} busy={busy} createClose={createClose} openClose={openClose} reviewException={reviewException} approveClose={approveClose} downloadPack={downloadPack} />;
   if (section === "traceability") return <CooperativeMemberRecordsView deliveries={deliveries} runs={runs} activeRun={activeRun} busy={busy} importFile={importFile} openRun={openRun} reviewItem={reviewItem} />;
   if (section === "reports") return <CooperativeCloseHistory closes={closes} openClose={openClose} onNavigate={onNavigate} />;
@@ -769,77 +771,176 @@ function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, ac
   return <Empty title="This cooperative view is not available" detail="Choose close desk, payout settlements, shared member records or close history." />;
 }
 
-function CooperativeOverview({ closes, deliveries, onNavigate, openClose }: AnyRecord) {
-  const latest = closes[0];
+function CooperativeOverview({ closes, deliveries, onNavigate, onOpenReceivable, openClose, token }: AnyRecord) {
+  const [claimCases, setClaimCases] = useState<AnyRecord[]>([]);
+  const [receivableSummary, setReceivableSummary] = useState<AnyRecord | null>(null);
+  const [relationships, setRelationships] = useState<AnyRecord[]>([]);
+  const [receivableLoading, setReceivableLoading] = useState(true);
+  const [receivableError, setReceivableError] = useState("");
+  const [refreshVersion, setRefreshVersion] = useState(0);
+
+  useEffect(() => {
+    let current = true;
+    setReceivableLoading(true);
+    setReceivableError("");
+    Promise.allSettled([
+      api<AnyRecord[]>("/api/v1/cooperative/receivables/cases", token),
+      api<AnyRecord>("/api/v1/cooperative/receivables/summary", token),
+      api<AnyRecord[]>("/api/v1/cooperative/receivables/relationships", token),
+    ]).then((results) => {
+      if (!current) return;
+      const [casesResult, summaryResult, relationshipsResult] = results;
+      const failures: string[] = [];
+      if (casesResult.status === "fulfilled") setClaimCases(casesResult.value); else failures.push("claim list");
+      if (summaryResult.status === "fulfilled") setReceivableSummary(summaryResult.value); else failures.push("aging summary");
+      if (relationshipsResult.status === "fulfilled") setRelationships(relationshipsResult.value); else failures.push("processor links");
+      setReceivableError(failures.length ? `Could not load ${failures.join(", ")}.` : "");
+      setReceivableLoading(false);
+    });
+    return () => { current = false; };
+  }, [token, refreshVersion]);
+
   const openPeriods = closes.filter((close: AnyRecord) => close.status !== "approved");
-  const unresolvedExceptions = openPeriods.reduce((total: number, close: AnyRecord) => total + Number(close.unresolved_exception_count ?? close.pending_review_count ?? 0), 0);
   const oldestOpenPeriods = [...openPeriods].sort((a: AnyRecord, b: AnyRecord) => String(a.period_start).localeCompare(String(b.period_start)));
-  const exceptionClose = oldestOpenPeriods.find((close: AnyRecord) => Number(close.unresolved_exception_count ?? close.pending_review_count ?? 0) > 0);
-  const signoffClose = oldestOpenPeriods[0];
-  const approvedPeriods = closes.filter((close: AnyRecord) => close.status === "approved").length;
-  const recordedCloseMinutes = closes
-    .filter((close: AnyRecord) => close.status === "approved" && close.created_at && close.approved_at)
-    .map((close: AnyRecord) => (Date.parse(close.approved_at) - Date.parse(close.created_at)) / 60_000)
-    .filter((minutes: number) => Number.isFinite(minutes) && minutes >= 0)
-    .sort((a: number, b: number) => a - b);
-  const middleCloseIndex = Math.floor(recordedCloseMinutes.length / 2);
-  const medianCloseMinutes = !recordedCloseMinutes.length
-    ? null
-    : recordedCloseMinutes.length % 2
-      ? recordedCloseMinutes[middleCloseIndex]
-      : (recordedCloseMinutes[middleCloseIndex - 1] + recordedCloseMinutes[middleCloseIndex]) / 2;
-  const autoMatchPercent = latest?.member_count ? Math.round((latest.reconciled_count / latest.member_count) * 100) : null;
-  const issueLabels: Record<string, string> = {
-    missing_collection: "Missing collection row",
-    missing_processor_settlement: "Missing processor row",
-    missing_payout: "Missing payout row",
-    volume_variance: "Volume mismatch",
-    processor_amount_variance: "Processor arithmetic mismatch",
-    payout_variance: "Payout amount mismatch",
-  };
-  const latestIssueReasons = Object.entries(latest?.issue_counts || {})
-    .sort((a, b) => Number(b[1]) - Number(a[1]))
-    .slice(0, 4);
-  const latestStatus = latest?.status === "approved" ? "Approved" : latest ? "Review required" : "No close yet";
-  function openPeriod(id: string) { onNavigate("settlements"); void openClose(id); }
-  return <div className="coop-dashboard">
-    <section className="coop-hero">
-      <div className="coop-hero-copy"><p className="coop-kicker">COOPERATIVE FINANCE WORKSPACE</p><h2>Close each payout period with evidence.</h2><p>Bring collection, processor settlement and payout exports into one review queue. Your team owns every exception and approval.</p><div className="coop-hero-actions"><button className="button coop-primary-button" onClick={() => onNavigate("settlements")}>{latest ? "Open settlement desk" : "Start first settlement close"}<ArrowRight size={15} /></button><button className="coop-text-button" onClick={() => onNavigate("traceability")}>Review consented delivery records</button></div></div>
-      <div className="coop-latest-card"><div className="coop-latest-top"><span>Most recent period</span><StatusPill tone={latest?.status === "approved" ? "green" : latest ? "amber" : "neutral"}>{latestStatus}</StatusPill></div>{latest ? <><strong>{latest.period_start} <span>to</span> {latest.period_end}</strong><div className="coop-latest-meta"><span>{latest.member_count} member rows</span><span>{latest.unresolved_exception_count ?? latest.pending_review_count ?? 0} unresolved</span></div><button type="button" className="coop-inline-link" onClick={() => openPeriod(latest.id)}>Continue this close <ArrowRight size={14} /></button></> : <><strong>No period imported</strong><p>Start with one completed period using your existing exports.</p></>}</div>
+  const linkedProcessor = relationships.some((relationship) => relationship.status === "active" && relationship.counterparty_organization_id);
+  const evidenceAttached = claimCases.some((claim) => claim.evidence?.length > 0);
+  const claimSubmitted = claimCases.some((claim) => ["submitted", "accepted", "partially_accepted", "disputed", "paid", "closed"].includes(claim.status));
+  const processorResponded = claimCases.some((claim) => claim.confirmations?.length > 0);
+  const readiness = [
+    { label: "Link processor workspace", done: linkedProcessor, detail: "Authorized processor relationship" },
+    { label: "Attach claim source evidence", done: evidenceAttached, detail: "Statement, invoice or delivery record" },
+    { label: "Submit a claim for response", done: claimSubmitted, detail: "A cooperative assertion sent to the processor" },
+    { label: "Record processor position", done: processorResponded, detail: "Response retained against the claim" },
+  ];
+  const readinessComplete = readiness.filter((item) => item.done).length;
+
+  const tasks: AnyRecord[] = [];
+  for (const close of oldestOpenPeriods) {
+    const pending = Number(close.unresolved_exception_count ?? close.pending_review_count ?? 0);
+    if (pending > 0) tasks.push({ id: `close-${close.id}`, title: `Review ${pending} payout exception${pending === 1 ? "" : "s"}`, detail: `${close.period_start} to ${close.period_end} · ${close.member_count} member rows`, badge: `${pending} open`, tone: "amber", rank: 2, closeId: close.id });
+    else tasks.push({ id: `signoff-${close.id}`, title: "Review payout close for sign-off", detail: `${close.period_start} to ${close.period_end} · ${close.reconciled_count}/${close.member_count} rows reconciled`, badge: "Needs approval", tone: "neutral", rank: 3, closeId: close.id });
+  }
+  for (const claim of claimCases) {
+    if (["paid", "closed"].includes(claim.status)) continue;
+    const lastResponse = claim.confirmations?.[claim.confirmations.length - 1];
+    const evidenceCount = claim.evidence?.length || 0;
+    let title = `Review claim ${claim.source_reference}`;
+    let badge = claim.status.replaceAll("_", " ");
+    let tone = "neutral";
+    let rank = 4;
+    if (claim.status === "draft") {
+      title = evidenceCount ? `Review and assert claim ${claim.source_reference}` : `Attach source evidence to ${claim.source_reference}`;
+      badge = evidenceCount ? "Draft ready" : "Evidence needed";
+      tone = "amber";
+      rank = evidenceCount ? 2 : 1;
+    } else if (claim.status === "asserted") {
+      title = `Submit claim ${claim.source_reference} to processor`;
+      badge = "Ready to submit";
+      tone = "amber";
+      rank = 1;
+    } else if (lastResponse?.response_status === "needs_information") {
+      title = `Respond to information request · ${claim.source_reference}`;
+      badge = "Cooperative action";
+      tone = "amber";
+      rank = 0;
+    } else if (["disputed", "rejected", "partially_accepted"].includes(lastResponse?.response_status)) {
+      title = `Review processor response · ${claim.source_reference}`;
+      badge = lastResponse.response_status.replaceAll("_", " ");
+      tone = "amber";
+      rank = 1;
+    } else if (claim.status === "submitted" && !lastResponse) {
+      title = `Monitor processor response · ${claim.source_reference}`;
+      badge = "Awaiting response";
+      tone = "neutral";
+      rank = 4;
+    } else if (lastResponse) {
+      title = `Review response and receipt · ${claim.source_reference}`;
+      badge = lastResponse.response_status.replaceAll("_", " ");
+      tone = "neutral";
+      rank = 2;
+    }
+    const reviewedDueDate = claim.due_date && typeof claim.aging?.days_past_due === "number" && claim.aging?.bucket !== "date_unknown" && !claim.aging?.bucket?.startsWith("invoice_");
+    const overdue = reviewedDueDate ? Number(claim.aging?.days_past_due || 0) : 0;
+    if (overdue > 0) { badge = `${overdue}d overdue`; tone = "red"; rank = Math.min(rank, 0); }
+    else if (reviewedDueDate) {
+      const asOf = String(claim.aging?.as_of || new Date().toISOString().slice(0, 10));
+      const daysUntilDue = Math.round((Date.parse(`${claim.due_date}T00:00:00Z`) - Date.parse(`${asOf}T00:00:00Z`)) / 86_400_000);
+      if (daysUntilDue >= 0 && daysUntilDue <= 7) { badge = daysUntilDue === 0 ? "Due today" : `Due in ${daysUntilDue}d`; tone = "amber"; rank = Math.min(rank, 1); }
+    }
+    const currency = claim.currency || "KES";
+    const claimMoney = (value: unknown) => new Intl.NumberFormat("en-KE", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(value || 0));
+    const sellerRemaining = claim.amounts?.seller_asserted_less_reported_receipts ?? claim.asserted_amount;
+    const confirmedRemaining = claim.amounts?.processor_confirmed_less_reviewed_receipts;
+    const amountContext = confirmedRemaining === null || confirmedRemaining === undefined
+      ? `${claimMoney(sellerRemaining)} seller-reported remaining`
+      : `${claimMoney(sellerRemaining)} seller · ${claimMoney(confirmedRemaining)} processor-confirmed`;
+    const ageBasis = claim.aging?.bucket?.startsWith("invoice_")
+      ? "invoice age · due date unknown"
+      : claim.aging?.bucket === "date_unknown"
+        ? "no reviewed date basis"
+        : claim.aging?.bucket === "due_today"
+          ? "due today"
+          : claim.aging?.days_past_due > 0
+            ? `${claim.aging.days_past_due} days past due`
+            : claim.aging?.bucket === "not_yet_due"
+              ? "reviewed due date"
+              : "due date basis unavailable";
+    tasks.push({ id: `claim-${claim.id}`, title, detail: `${amountContext} · ${ageBasis}`, badge, tone, rank, caseId: claim.id, updatedAt: claim.updated_at });
+  }
+  tasks.sort((a, b) => a.rank - b.rank || String(a.updatedAt || a.id).localeCompare(String(b.updatedAt || b.id)));
+  const priorityTasks = tasks.slice(0, 3);
+
+  const ageDefinitions = [
+    ["not_yet_due", "Not yet due"], ["due_today", "Due today"],
+    ["overdue_1_30", "1–30 days overdue"], ["overdue_31_60", "31–60 days overdue"],
+    ["overdue_61_90", "61–90 days overdue"], ["overdue_90_plus", "Over 90 days overdue"],
+    ["invoice_not_yet_issued", "Invoice age · not due"], ["invoice_today", "Invoice age · today"],
+    ["invoice_1_30", "Invoice age · 1–30 days"], ["invoice_31_60", "Invoice age · 31–60 days"],
+    ["invoice_61_90", "Invoice age · 61–90 days"], ["invoice_90_plus", "Invoice age · over 90 days"],
+    ["date_unknown", "Date basis unknown"],
+  ] as const;
+  const ageRows = ageDefinitions.map(([key, label]) => ({
+    key, label, count: Number(receivableSummary?.aging_buckets?.[key] || 0),
+    seller: Number(receivableSummary?.seller_asserted_balance_by_age_bucket?.[key] || 0),
+    confirmed: Number(receivableSummary?.processor_confirmed_balance_by_age_bucket?.[key] || 0),
+  })).filter((row) => row.count > 0 || row.seller > 0 || row.confirmed > 0);
+  const maxAgeValue = Math.max(1, ...ageRows.flatMap((row) => [row.seller, row.confirmed]));
+  const summaryCurrencies = [...new Set(claimCases.filter((claim) => !["draft", "paid", "closed"].includes(claim.status)).map((claim) => String(claim.currency || "KES")))];
+  const claimListFailed = receivableError.toLowerCase().includes("claim list");
+  const summaryCurrency = !claimListFailed && summaryCurrencies.length <= 1 ? summaryCurrencies[0] || "KES" : null;
+  const money = (value: unknown, currency = summaryCurrency || "KES") => new Intl.NumberFormat("en-KE", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(value || 0));
+  const openPeriod = (id: string) => { onNavigate("settlements"); void openClose(id); };
+
+  return <div className="coop-ops-dashboard">
+    <section className="card coop-priority-card" aria-labelledby="coop-priority-title">
+      <div className="coop-queue-tools"><span className="coop-queue-count">{receivableLoading ? "Updating…" : tasks.length ? `${tasks.length} open item${tasks.length === 1 ? "" : "s"}` : "Clear"}</span><button type="button" className="coop-text-button" onClick={() => onNavigate("receivables")}>View full queue <ArrowRight size={14} /></button></div>
+      {priorityTasks.length ? <div className="coop-task-list">{priorityTasks.map((task) => <button type="button" className="coop-task-row" key={task.id} onClick={() => task.caseId ? onOpenReceivable(task.caseId) : openPeriod(task.closeId)}><span className={`coop-task-mark ${task.caseId ? "claim" : "close"}`}>{task.caseId ? <ReceiptText size={17} /> : <FileUp size={17} />}</span><span className="coop-task-copy"><strong>{task.title}</strong><small>{task.detail}</small></span><span className={`coop-task-badge ${task.tone}`}>{task.badge}</span><span className="coop-task-action">{task.caseId ? "Review" : "Open"}<ArrowRight size={14} /></span></button>)}</div> : receivableLoading ? <div className="coop-dashboard-empty"><LoaderCircle size={17} className="spinner" />Loading current claims and close work…</div> : receivableError ? <div className="coop-dashboard-empty"><AlertTriangle size={17} /><div><strong>Could not confirm the current work queue</strong><small>{receivableError} Retry before treating this queue as clear.</small></div><button type="button" className="button button-outline" onClick={() => setRefreshVersion((value) => value + 1)}>Retry</button></div> : <div className="coop-dashboard-empty"><span className="coop-empty-check"><Check size={16} /></span><div><strong>No open actions in this workspace</strong><small>Start a payout close or create a source-backed processor claim when records are ready.</small></div><button type="button" className="button button-primary" onClick={() => onNavigate(closes.length ? "receivables" : "settlements")}>{closes.length ? "Open receivables" : "Start first close"}<ArrowRight size={14} /></button></div>}
+      {receivableError ? <div className="coop-dashboard-error" role="status"><span>{receivableError}</span><button type="button" onClick={() => setRefreshVersion((value) => value + 1)}>Retry</button></div> : null}
     </section>
 
-    <TerravantaVideoFeature />
-
-    <section className="coop-kpis" aria-label="Cooperative activity indicators">
-      <article className="coop-kpi"><span>Unresolved member exceptions</span><strong>{unresolvedExceptions}</strong><small>{openPeriods.length ? "Across unapproved periods" : "No open settlement periods"}</small></article>
-      <article className="coop-kpi"><span>Approved periods</span><strong>{approvedPeriods}</strong><small>Named cooperative sign-off recorded</small></article>
-      <article className="coop-kpi"><span>Latest close auto-matched</span><strong>{autoMatchPercent === null ? "—" : `${autoMatchPercent}%`}</strong><small>{latest ? `${latest.reconciled_count}/${latest.member_count} member rows · ${latest.period_start} to ${latest.period_end}` : "No settlement data yet"}</small></article>
-      <article className="coop-kpi"><span>Median import-to-sign-off</span><strong>{medianCloseMinutes === null ? "—" : formatCloseDuration(medianCloseMinutes)}</strong><small>{recordedCloseMinutes.length ? `Measured across ${recordedCloseMinutes.length} approved close${recordedCloseMinutes.length === 1 ? "" : "s"}` : "Appears after an approved close"}</small></article>
-    </section>
-
-    <section className="card coop-pattern-card"><div><p className="eyebrow">LATEST PERIOD · EXCEPTION PATTERN</p><h2>What the close desk needs to resolve</h2><p>Counts come from source-row and arithmetic checks in the latest imported close.</p></div>{latestIssueReasons.length ? <div className="coop-reason-list">{latestIssueReasons.map(([code, count]) => <span className="coop-reason-chip" key={code}><strong>{Number(count)}</strong>{issueLabels[code] || code.replaceAll("_", " ")}</span>)}</div> : <span className="coop-pattern-empty">{latest ? "No exception patterns in this period" : "Exception patterns appear after your first import"}</span>}<small className="coop-pattern-note">These are deterministic reconciliation checks, not predicted fraud or payment outcomes. Close duration starts at Terravanta import, so it excludes source preparation and work outside the platform. {deliveries.length} consented delivery summaries are available in shared member records.</small></section>
-
-    <div className="coop-dashboard-grid">
-      <section className="card coop-next-action">
-        <PanelTitle eyebrow="NEXT ACTION" title={!latest ? "Choose a completed period" : unresolvedExceptions ? `Resolve ${unresolvedExceptions} open exception${unresolvedExceptions === 1 ? "" : "s"}` : signoffClose ? "An open close is ready for sign-off" : "Prepare the next payout close"} description={!latest ? "No live metrics are shown before a close is imported." : unresolvedExceptions ? "Open the oldest period with unresolved items, compare each variance with its source rows, and leave a reviewer note. Follow-up items remain unresolved." : signoffClose ? "Check the summary and add an approval note. Approval does not initiate payment." : "When the next period is ready, bring in its three source exports."} />
-        <button className="button button-primary" onClick={() => exceptionClose ? openPeriod(exceptionClose.id) : signoffClose ? openPeriod(signoffClose.id) : onNavigate("settlements")}>{!latest ? "Start first close" : unresolvedExceptions ? "Review unresolved items" : signoffClose ? "Review and approve" : "Start next close"}<ArrowRight size={15} /></button>
+    <div className="coop-ops-grid">
+      <section className="card coop-aging-panel" aria-labelledby="coop-aging-title">
+        <div className="coop-ops-heading"><div><p className="eyebrow">PROCESSOR RECEIVABLES</p><h2 id="coop-aging-title">Open balance by age</h2><p className="muted">Seller assertions and processor-confirmed positions remain separate.</p></div><button type="button" className="coop-text-button" onClick={() => onNavigate("receivables")}>Claim register <ArrowRight size={14} /></button></div>
+        <div className="coop-balance-totals"><div><span>Seller-reported open</span><strong>{receivableSummary ? summaryCurrency ? money(receivableSummary.seller_reported_outstanding_total) : claimListFailed ? "Currency unavailable" : "Mixed currencies" : "—"}</strong></div><div><span>Processor-confirmed remaining</span><strong>{receivableSummary ? summaryCurrency ? money(receivableSummary.processor_confirmed_outstanding_total) : claimListFailed ? "Currency unavailable" : "Mixed currencies" : "—"}</strong></div></div>
+        {!summaryCurrency && receivableSummary ? <div className="coop-currency-notice"><ShieldCheck size={15} /><span>{claimListFailed ? "Claim currencies could not be checked because the claim list failed. Combined aging amounts are hidden until the list loads." : "Claims use multiple currencies. Combined aging amounts are hidden to avoid adding unlike currencies; open the register to review each claim in its own currency."}</span></div> : null}
+        {receivableLoading && !receivableSummary ? <div className="coop-dashboard-empty compact"><LoaderCircle size={16} className="spinner" />Loading verified aging inputs…</div> : !receivableSummary ? <div className="coop-dashboard-empty compact"><div><strong>Aging snapshot unavailable</strong><small>{receivableError || "The API did not return the claim aging summary."}</small></div><button type="button" className="coop-text-button" onClick={() => setRefreshVersion((value) => value + 1)}>Retry <ArrowRight size={13} /></button></div> : ageRows.length ? <div className={`coop-aging-rows ${!summaryCurrency ? "counts-only" : ""}`}><div className="coop-aging-head"><span>Age basis</span>{summaryCurrency ? <><span>Seller assertion</span><span>Processor confirmed</span></> : <span>Claims</span>}</div>{ageRows.map((row) => <div className="coop-aging-row" key={row.key}><span className="coop-aging-label"><strong>{row.label}</strong><small>{row.count} claim{row.count === 1 ? "" : "s"}</small></span>{summaryCurrency ? <><span className="coop-aging-value"><b>{money(row.seller)}</b><i><span style={{ width: `${Math.max(row.seller > 0 ? 2 : 0, row.seller / maxAgeValue * 100)}%` }} /></i></span><span className="coop-aging-value confirmed"><b>{money(row.confirmed)}</b><i><span style={{ width: `${Math.max(row.confirmed > 0 ? 2 : 0, row.confirmed / maxAgeValue * 100)}%` }} /></i></span></> : <span className="coop-aging-count">{row.count}</span>}</div>)}</div> : <div className="coop-dashboard-empty compact"><span className="coop-empty-check"><Check size={15} /></span><div><strong>No open claims to age</strong><small>Open a claim from a processor statement to see its age and date basis here.</small></div><button type="button" className="coop-text-button" onClick={() => onNavigate("receivables")}>Create a claim <ArrowRight size={13} /></button></div>}
+        <small className="coop-aging-footnote">Aging follows reviewed due dates. Where those are unavailable, invoice age or an unknown date basis is labeled separately; this is not a legal determination of arrears.</small>
       </section>
-      <section className="card coop-scope-card"><PanelTitle eyebrow="WHAT TERRAVANTA DOES" title="A reviewable close workflow" /><ol className="coop-process"><li><span>01</span><div><strong>Bring three exports</strong><small>Collection, processor settlement and payout</small></div></li><li><span>02</span><div><strong>Compare member totals</strong><small>Volume, arithmetic and payout consistency</small></div></li><li><span>03</span><div><strong>Resolve exceptions</strong><small>Named reviewer, source references and note</small></div></li><li><span>04</span><div><strong>Approve and export</strong><small>Statement pack after sign-off</small></div></li></ol><p className="coop-boundary-note"><ShieldCheck size={16} /> No AI call, ledger write-back or payment execution is part of this workflow.</p></section>
+
+      <section className="card coop-readiness-panel" aria-labelledby="coop-readiness-title">
+        <div className="coop-ops-heading"><div><p className="eyebrow">RECEIVABLES READINESS</p><h2 id="coop-readiness-title">Build a reviewable claim path</h2><p className="muted">Progress is based on records in this cooperative account.</p></div><strong className="coop-readiness-count">{receivableLoading || receivableError ? "—" : readinessComplete}<small> / {readiness.length}</small></strong></div>
+        <div className="coop-readiness-track" aria-label={receivableLoading ? "Loading readiness status" : `${readinessComplete} of ${readiness.length} steps complete`}><span style={{ width: `${receivableLoading ? 0 : readinessComplete / readiness.length * 100}%` }} /></div>
+        {receivableLoading ? <div className="coop-dashboard-empty compact"><LoaderCircle size={16} className="spinner" />Loading readiness checks…</div> : receivableError ? <div className="coop-dashboard-empty compact"><div><strong>Readiness checks are incomplete</strong><small>{receivableError}</small></div><button type="button" className="coop-text-button" onClick={() => setRefreshVersion((value) => value + 1)}>Retry <ArrowRight size={13} /></button></div> : <><ol className="coop-readiness-list">{readiness.map((step) => <li key={step.label} className={step.done ? "done" : "pending"}><span className="coop-readiness-icon">{step.done ? <Check size={13} /> : <span />}</span><span><strong>{step.label}</strong><small>{step.detail}</small></span>{step.done ? <em>Done</em> : null}</li>)}</ol>
+          {readinessComplete < readiness.length ? <button type="button" className="button button-outline coop-readiness-button" onClick={() => onNavigate("receivables")}>Continue setup <ArrowRight size={14} /></button> : <div className="coop-readiness-complete"><ShieldCheck size={16} />A processor response is recorded. Keep evidence and receipt updates attached to each claim.</div>}
+        </>}
+      </section>
     </div>
 
-    <section className="card coop-recent-card"><div className="coop-section-head"><PanelTitle eyebrow="PERIOD ACTIVITY" title="Recent settlement closes" description="Counts and status are returned from your cooperative records." /><button className="coop-text-button" onClick={() => onNavigate("reports")}>View close history <ArrowRight size={14} /></button></div>{closes.length ? <div className="coop-period-list">{closes.slice(0, 4).map((close: AnyRecord) => <button type="button" className="coop-period-row" key={close.id} onClick={() => openPeriod(close.id)}><span className="coop-period-icon"><FileUp size={16} /></span><span className="coop-period-main"><strong>{close.period_start} <span>to</span> {close.period_end}</strong><small>{close.member_count} members · {close.collection_row_count + close.processor_row_count + close.payout_row_count} source rows</small></span><span className="coop-period-counts"><strong>{close.reconciled_count}/{close.member_count} reconciled</strong><small>{close.unresolved_exception_count ?? close.pending_review_count ?? 0} unresolved exceptions</small></span><StatusPill tone={close.status === "approved" ? "green" : "amber"}>{close.status.replaceAll("_", " ")}</StatusPill><ArrowRight className="coop-period-arrow" size={16} /></button>)}</div> : <Empty title="No settlement close has been run" detail="The dashboard will show period coverage and review workload after your first import." />}</section>
-  </div>;
-}
+    <section className="card coop-recent-card"><div className="coop-section-head"><PanelTitle eyebrow="PAYOUT CLOSE ACTIVITY" title="Recent settlement closes" description="Source rows, exceptions and approvals recorded by your cooperative." /><button className="coop-text-button" onClick={() => onNavigate("reports")}>Close history <ArrowRight size={14} /></button></div>{closes.length ? <div className="coop-period-list">{closes.slice(0, 4).map((close: AnyRecord) => <button type="button" className="coop-period-row" key={close.id} onClick={() => openPeriod(close.id)}><span className="coop-period-icon"><FileUp size={16} /></span><span className="coop-period-main"><strong>{close.period_start} <span>to</span> {close.period_end}</strong><small>{close.member_count} members · {close.collection_row_count + close.processor_row_count + close.payout_row_count} source rows</small></span><span className="coop-period-counts"><strong>{close.reconciled_count}/{close.member_count} reconciled</strong><small>{close.unresolved_exception_count ?? close.pending_review_count ?? 0} unresolved exceptions</small></span><StatusPill tone={close.status === "approved" ? "green" : "amber"}>{close.status.replaceAll("_", " ")}</StatusPill><ArrowRight className="coop-period-arrow" size={16} /></button>)}</div> : <Empty title="No settlement close has been run" detail="Import one completed period’s collection, processor and payout files to see review work here." />}</section>
 
-function formatCloseDuration(minutes: number) {
-  const rounded = Math.round(minutes);
-  if (rounded < 60) return `${rounded}m`;
-  const hours = Math.floor(rounded / 60);
-  const remainingMinutes = rounded % 60;
-  if (hours < 24) return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-  return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+    <TerravantaVideoFeature />
+    <small className="coop-source-note"><ShieldCheck size={14} /> {deliveries.length} consented delivery summaries are available in shared member records. Claim balances come from recorded cooperative assertions and processor responses; no payment is initiated here.</small>
+  </div>;
 }
 
 function CooperativeCloseHistory({ closes, openClose, onNavigate }: AnyRecord) {

@@ -14,12 +14,12 @@ function amount(value: unknown, currency = "KES") {
 
 function Label({ children }: { children: React.ReactNode }) { return <span className="receivable-label">{children}</span>; }
 
-export function ReceivablesDesk({ role, token }: { role: string; token: string }) {
+export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: string; token: string; initialCaseId?: string }) {
   const processorMode = role === "processor_admin";
   const [cases, setCases] = useState<Row[]>([]);
   const [relationships, setRelationships] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Row | null>(null);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(initialCaseId);
   const [selected, setSelected] = useState<Row | null>(null);
   const [claimLines, setClaimLines] = useState<Row[]>([]);
   const [lineDraft, setLineDraft] = useState<Row>({ line_type: "accepted_supply", direction: "increase", source_reference: "", occurred_on: "", amount: "" });

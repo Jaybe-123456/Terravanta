@@ -39,11 +39,12 @@ export function Sidebar({ active, onChange, role, userName, farmName = "Farm wor
       ? { title: "Clinical review stays human", note: "Sign only records you review" }
       : { title: "Organization access is assigned", note: "Co-op and processor menus need staff access" };
   const navigationLabel = role === "cooperative_admin" ? "PAYOUT & CLAIMS" : role === "processor_admin" ? "ACCOUNTS PAYABLE" : role === "veterinarian" ? "CASEWORK" : "FARMER WORKSPACE";
+  const workspaceHeading = role === "cooperative_admin" ? "Cooperative claims owner" : role === "processor_admin" ? "Processor AP reviewer" : farmName;
   return <aside className="sidebar">
     <a className="brand" href="#overview" onClick={(event) => { event.preventDefault(); onChange("overview"); }} aria-label="Terravanta overview">
       <span className="brand-mark"><Leaf size={20} /></span><span>terravanta<small>FARM INTELLIGENCE</small></span>
     </a>
-    <div className="farm-switcher"><span className="farm-avatar">TV</span><div><strong>{farmName}</strong><small>{location}</small></div><span className="chevron">⌄</span></div>
+    <div className={`farm-switcher ${role === "cooperative_admin" || role === "processor_admin" ? "role-context-switcher" : ""}`}><span className="farm-avatar">TV</span><div>{role === "cooperative_admin" || role === "processor_admin" ? <small className="workspace-context-label">VIEWING AS</small> : null}<strong>{workspaceHeading}</strong><small>{location}</small></div><span className="chevron">⌄</span></div>
     <p className="nav-label">{navigationLabel}</p>
     <nav aria-label="Main navigation" className="nav-list">
       {primaryNavigation.map(({ id, label, icon: Icon }) => <button type="button" key={id} onClick={() => onChange(id)} className={`nav-item ${active === id ? "active" : ""}`} aria-current={active === id ? "page" : undefined}>

@@ -12,6 +12,8 @@ The product has three role-specific workspaces:
 
 See [core platform architecture, auth, RLS and API boundaries](docs/CORE_PLATFORM_ARCHITECTURE.md), [system architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
 
+The current smallholder commercial viability review, Kenya legal/data gates, multi-objective product state/action harness and Kubernetes decision are in [Commercial viability and harness](docs/COMMERCIAL_VIABILITY_AND_HARNESS.md). GitHub Actions validates its machine-readable state at `config/terravanta-commercial-harness.json`.
+
 To deploy the public API and managed PostGIS database on Render, use the [Render deployment guide](docs/RENDER_DEPLOYMENT.md) and the checked-in `render.yaml` Blueprint.
 
 The cooperative workspace retains two separate finance workflows. Member payout close compares collection, processor settlement and member payout exports; receivables assurance records what the cooperative asserts a processor owes, what the processor responds and what receipts are allocated. One does not prove or update the other. Receivables is implemented as a manual product slice, but no real claim, processor response, paid renewal or PMF has been demonstrated. See [receivables assurance](docs/RECEIVABLES_ASSURANCE.md) and [the market wedge plan](docs/GO_TO_MARKET.md).

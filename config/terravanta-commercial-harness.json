@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-11-21",
+  "state_scope": "repository_audit_not_live_telemetry",
+  "current_state": {
+    "commercial_stage": "unvalidated_manual_receivables_slice",
+    "real_cooperative_claims_reconstructed": 0,
+    "real_processor_responses_recorded": 0,
+    "documented_paid_repeats": 0,
+    "live_source_connectors": [],
+    "production_deployment_state": "requires_operator_verification",
+    "render_blueprint_region": "singapore",
+    "evidence_storage_mode": "single_instance_persistent_disk_by_default"
+  },
+  "desired_state": {
+    "commercial_stage": "repeatable_paid_claim_operations",
+    "proof_required": [
+      "A buyer authorizes a real retrospective case and names a budget owner.",
+      "A baseline is measured before reconstruction.",
+      "The seller validates source lineage and amount positions remain separated.",
+      "An authorized processor response or a documented reason for no response is recorded.",
+      "A priced repeat is approved with a written artifact.",
+      "A second repeat uses the same workflow and has positive contribution margin after direct delivery costs."
+    ]
+  },
+  "state_machine": [
+    "unvalidated",
+    "buyer_problem_verified",
+    "data_authorized",
+    "baseline_measured",
+    "retrospective_case_reconstructed",
+    "counterparty_response_recorded",
+    "priced_repeat_approved",
+    "second_repeat_positive_margin",
+    "repeatable_product"
+  ],
+  "objectives": [
+    {
+      "id": "buyer_value",
+      "direction": "maximize",
+      "measure": "Staff minutes from source files received to a reviewed claim pack, compared with the same buyer's pre-pilot baseline.",
+      "evidence_owner": "cooperative_claim_owner",
+      "pass_rule": "Set and sign with the buyer before the pilot; do not use a generic benchmark."
+    },
+    {
+      "id": "evidence_integrity",
+      "direction": "maximize",
+      "measure": "Claim value traceable to authorized source rows/pages; false-match count; seller-asserted, processor-confirmed, disputed and received amounts kept distinct.",
+      "evidence_owner": "cooperative_reviewer_and_processor_reviewer",
+      "pass_rule": "No silent mapping or amount overwrite; unresolved source conflicts remain unresolved."
+    },
+    {
+      "id": "counterparty_resolution",
+      "direction": "maximize",
+      "measure": "Share of claim value with a recorded response, response time, reason code and later correction or cash allocation.",
+      "evidence_owner": "authorized_processor_reviewer",
+      "pass_rule": "Report response and non-response separately; seller-only evidence is not buyer-confirmed."
+    },
+    {
+      "id": "paid_repeat_economics",
+      "direction": "maximize",
+      "measure": "Written repeat price less measured direct onboarding, review, follow-up, support and infrastructure costs per counterparty-period.",
+      "evidence_owner": "named_budget_owner_and_terravanta_operator",
+      "pass_rule": "A paid repeat needs a quote, purchase order, contract or decision email; the second repeat must have positive measured contribution margin."
+    },
+    {
+      "id": "trust_and_compliance",
+      "direction": "minimize_risk",
+      "measure": "Unauthorized access or sharing, unresolved consent/mandate, data incidents, unsupported legal labels, and overdue retention/deletion actions.",
+      "evidence_owner": "data_protection_owner",
+      "pass_rule": "Zero unresolved authority or cross-border transfer blockers before live personal data; any material incident pauses ingestion."
+    }
+  ],
+  "hard_constraints": [
+    "No farmer subscription is assumed as the initial payer.",
+    "No Terravanta lending, factoring, custody of customer funds, payment initiation, credit decision or recovery guarantee without a separately reviewed legal and licensed-partner model.",
+    "No software-generated legal conclusion that a balance is due, overdue, recoverable or financeable.",
+    "No live claim evidence until the cooperative documents authority, purpose, access, retention, deletion and transfer safeguards.",
+    "No external model request for financial or personal data without explicit scoped authorization and approved terms.",
+    "Synthetic records and founder attestations never count as customer, market or revenue evidence."
+  ],
+  "action_rules": [
+    {
+      "when": "No named buyer, recurring claim problem or budget owner is verified.",
+      "action": "Interview cooperative claim owners, processor AP reviewers and financiers; do not add product features to compensate for missing demand."
+    },
+    {
+      "when": "Source records exist but authority, data sharing terms or cross-border safeguards are incomplete.",
+      "action": "Pause live-data ingestion and resolve the legal/data-control gate before the pilot."
+    },
+    {
+      "when": "A retrospective case has no baseline or has seller-only evidence.",
+      "action": "Measure the old workflow and label the claim as seller-asserted; do not call it confirmed or lender-ready."
+    },
+    {
+      "when": "The processor does not respond or the financier will not rely on the pack.",
+      "action": "Record the reason and test whether the cooperative will pay for seller-side claim operations; do not claim a network or financing moat."
+    },
+    {
+      "when": "The first paid repeat is absent or direct delivery cost exceeds its price.",
+      "action": "Do not scale integrations or infrastructure; narrow the service, change the payer/price hypothesis, or stop the wedge."
+    },
+    {
+      "when": "Two repeats show positive margin and reuse the same mappings and review protocol.",
+      "action": "Productize the proven import/review steps and test the same workflow with a second cooperative/processor pair."
+    }
+  ]
+}
