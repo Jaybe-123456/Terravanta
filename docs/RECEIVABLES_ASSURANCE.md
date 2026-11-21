@@ -132,9 +132,12 @@ The current router uses fixed role-scoped paths and derives organization scope f
 ```text
 GET/POST /api/v1/cooperative/receivables/relationships
 GET/POST /api/v1/cooperative/receivables/cases
+GET      /api/v1/cooperative/receivables/performance?window_days=90
 GET      /api/v1/cooperative/receivables/summary
 GET      /api/v1/cooperative/receivables/cases/{case_id}
 POST     /api/v1/cooperative/receivables/cases/{case_id}/evidence
+POST     /api/v1/cooperative/receivables/cases/{case_id}/due-date-review
+POST     /api/v1/cooperative/receivables/cases/{case_id}/information-response
 POST     /api/v1/cooperative/receivables/cases/{case_id}/assert
 POST     /api/v1/cooperative/receivables/cases/{case_id}/submit
 POST     /api/v1/cooperative/receivables/cases/{case_id}/receipts
@@ -167,6 +170,16 @@ Measure:
 - setup/support minutes and cost per counterparty-period.
 
 The pass condition is not “high automatic match rate.” Require the cooperative to validate provenance, a processor or other authorized counterparty to respond to at least one claim, a named budget owner to choose a priced repeat service, and acceptable delivery economics. If no processor response or paid repeat occurs, this has not proved a moat. If the receivable is undisputed but the processor lacks liquidity, evidence tooling alone cannot cure the arrears; the solution may require a lender or public intervention partner.
+
+## Operating workflow and measured close performance
+
+The claim file now exposes an API-derived workflow snapshot: draft, source evidence, cooperative assertion, processor submission, processor response, payment evidence and closure. The existing transition endpoints enforce the hard gates: a cooperative must attach source evidence before assertion, and an asserted claim must be sent to an active registered processor before it appears in that processor's inbox. When a processor requests information, a cooperative can append a response note and already-linked evidence; it does not alter the processor's original response. The processor inbox sorts changed claims first. Itemization and due-date support are surfaced as review gaps; an unknown due date does not prevent a claim from being submitted, but the interface keeps its past-due age unclassified.
+
+Cooperatives can add or correct a manually reviewed due date through `POST /api/v1/cooperative/receivables/cases/{case_id}/due-date-review`. This action requires an attached organization-owned evidence artifact and a reviewer note, links the file to the due-date basis, and appends an event containing the previous and new date, source file/hash prefix and note. This operational age remains a cooperative-entered view, not a legal arrears determination.
+
+`GET /api/v1/cooperative/receivables/performance?window_days=90` reports only actual records. Its cohort is claims created in the selected 30–365 day window; it returns median draft-to-submission time, submission-to-first-response time, submission-to-paid/closed time, and a rework rate. Rework means at least one processor request for information, dispute or rejection, divided by submitted claims in the cohort. Sample sizes are returned alongside medians; a metric with no observations is `null`, never zero. Current queue counts flag missing source files, itemization and source-linked due-date reviews. Values remain per claim currency in the register; the performance endpoint does not sum unlike currencies.
+
+The cooperative claim detail now shows stage milestones, blockers, source locators for each claim line, source-file links, the due-date review control, and an append-only event timeline. The measured-performance panel is fed by the API and includes an explicit empty state; it does not load synthetic example results. These workflow and performance additions reuse the existing tenant-scoped claim, evidence-link and event tables, so they do not require a database migration.
 
 ## Delivery sequence
 

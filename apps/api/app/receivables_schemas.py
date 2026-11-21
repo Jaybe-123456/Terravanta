@@ -71,6 +71,33 @@ class CaseCreate(BaseModel):
         return self
 
 
+class DueDateReviewCreate(BaseModel):
+    due_date: date
+    evidence_artifact_id: UUID
+    review_note: str = Field(min_length=5, max_length=1000)
+
+    @model_validator(mode="after")
+    def normalize(self):
+        self.review_note = self.review_note.strip()
+        if len(self.review_note) < 5:
+            raise ValueError("Explain where the reviewed due date came from")
+        return self
+
+
+class InformationResponseCreate(BaseModel):
+    evidence_artifact_ids: list[UUID] = Field(min_length=1, max_length=20)
+    response_note: str = Field(min_length=5, max_length=2000)
+
+    @model_validator(mode="after")
+    def normalize(self):
+        self.response_note = self.response_note.strip()
+        if len(self.response_note) < 5:
+            raise ValueError("Describe the information being provided to the processor")
+        if len(set(self.evidence_artifact_ids)) != len(self.evidence_artifact_ids):
+            raise ValueError("Evidence file IDs must be unique")
+        return self
+
+
 class CounterpartyResponseCreate(BaseModel):
     response_status: Literal["accepted", "partially_accepted", "disputed", "rejected", "needs_information"]
     confirmed_amount: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)

@@ -7,13 +7,14 @@ import json
 import logging
 import re
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import PurePath
+from statistics import median
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -26,7 +27,8 @@ from .models import (
     ReceivableCaseLine, ReceivableEvidenceLink, ReceivablesPilotDecision, SupplyContract, User, UserRole,
 )
 from .receivables_schemas import (
-    AllocationCreate, CaseCreate, CounterpartyResponseCreate, PilotDecisionCreate, ReceiptCreate, RelationshipCreate,
+    AllocationCreate, CaseCreate, CounterpartyResponseCreate, DueDateReviewCreate, InformationResponseCreate,
+    PilotDecisionCreate, ReceiptCreate, RelationshipCreate,
 )
 from .security import current_user, get_scoped_db, require_role
 
@@ -132,6 +134,66 @@ def _aging(case: ReceivableCase, today: date) -> dict:
     return {"as_of": today.isoformat(), "bucket": bucket, "days_past_due": days, "days_since_invoice": max(0, (today - case.invoice_date).days) if case.invoice_date else None}
 
 
+def _workflow_snapshot(case: ReceivableCase, evidence: list[dict], lines: list[ReceivableCaseLine], confirmations: list[CounterpartyConfirmation], relationship: CounterpartyRelationship | None, information_response_after_request: bool = False) -> dict:
+    """Explain claim progress and surface missing proof without changing the asserted facts."""
+    status = case.status
+    latest_response = confirmations[-1] if confirmations else None
+    if status == "submitted" and latest_response and latest_response.response_status == "needs_information" and not information_response_after_request:
+        stage, label = "information_requested", "Processor requested information"
+        next_action = "Review the processor request, attach the requested source, then respond through the cooperative workflow."
+    elif status == "submitted" and latest_response and latest_response.response_status == "needs_information" and information_response_after_request:
+        stage, label = "processor_review", "Information sent · awaiting review"
+        next_action = "The cooperative response is recorded. Wait for the processor to review it or add a new response."
+    else:
+        stages = {
+            "draft": ("draft", "Prepare claim", "Attach source evidence, add itemized components, and review the date basis."),
+            "asserted": ("asserted", "Ready to submit", "Submit the cooperative assertion to the registered processor workspace."),
+            "submitted": ("processor_review", "Processor review", "Record the processor response and any reference against this claim."),
+            "counterparty_confirmed": ("response_recorded", "Processor accepted", "Track the expected settlement and attach reviewed payment evidence when received."),
+            "partially_confirmed": ("partial_response", "Partial acceptance", "Review the accepted and disputed portions, then document the next action."),
+            "disputed": ("exception_resolution", "Resolve response", "Review the processor's stated basis and attach evidence for the remaining exception."),
+            "partially_paid": ("balance_tracking", "Track remaining balance", "Allocate any new receipt and retain evidence for the outstanding balance."),
+            "paid": ("settled", "Payment recorded", "Review the final evidence and close the claim file when the cooperative is ready."),
+            "closed": ("closed", "Claim file closed", "The claim workflow is complete."),
+        }
+        stage, label, next_action = stages.get(status, ("review", status.replace("_", " ").title(), "Review the claim record and choose the next accountable action."))
+
+    due_date_supported = any(item.get("evidence_role") == "due_date_support" for item in evidence)
+    blockers: list[dict] = []
+    if not evidence:
+        blockers.append({"code": "source_evidence_missing", "severity": "required", "message": "Attach a source document before asserting this claim."})
+    if not lines:
+        blockers.append({"code": "claim_not_itemized", "severity": "review", "message": "No claim components are itemized. Add source-linked lines to make the amount easier to review."})
+    if not relationship or relationship.status != "active" or not relationship.counterparty_organization_id:
+        blockers.append({"code": "processor_not_linked", "severity": "required" if status in {"draft", "asserted"} else "review", "message": "An active processor workspace is not linked to this claim."})
+    if case.due_date is None or case.due_date_basis == "unknown":
+        blockers.append({"code": "due_date_unknown", "severity": "review", "message": "Past-due aging is unavailable until a reviewer records a due date and its source."})
+    elif not due_date_supported:
+        blockers.append({"code": "due_date_source_missing", "severity": "review", "message": "A due date is recorded, but no supporting document is linked to its review."})
+    if status == "disputed":
+        blockers.append({"code": "processor_exception", "severity": "review", "message": "The processor recorded a dispute or rejection that needs a documented resolution."})
+    if status == "submitted" and not confirmations:
+        blockers.append({"code": "response_pending", "severity": "waiting", "message": "No processor response has been recorded yet."})
+
+    submitted = status in {"submitted", "counterparty_confirmed", "partially_confirmed", "disputed", "partially_paid", "paid", "closed"}
+    responded = bool(confirmations)
+    payment_reviewed = status in {"partially_paid", "paid", "closed"}
+    steps = [
+        {"key": "draft", "label": "Claim drafted", "complete": True},
+        {"key": "evidence", "label": "Source evidence attached", "complete": bool(evidence)},
+        {"key": "assertion", "label": "Cooperative assertion", "complete": status != "draft"},
+        {"key": "submission", "label": "Sent to processor", "complete": submitted},
+        {"key": "response", "label": "Processor response", "complete": responded},
+        {"key": "payment", "label": "Payment evidence reviewed", "complete": payment_reviewed},
+        {"key": "closure", "label": "Claim file closed", "complete": status == "closed"},
+    ]
+    return {
+        "stage": stage, "label": label, "next_action": next_action,
+        "steps": steps, "blockers": blockers,
+        "due_date_source_supported": due_date_supported,
+    }
+
+
 def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = True) -> dict:
     lines = db.query(ReceivableCaseLine).filter_by(case_id=case.id, organization_id=case.organization_id).order_by(ReceivableCaseLine.line_number).all()
     links = db.query(ReceivableEvidenceLink).filter_by(case_id=case.id, organization_id=case.organization_id).all()
@@ -148,6 +210,7 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
                 "created_at": artifact.created_at.isoformat(),
             })
     confirmations = db.query(CounterpartyConfirmation).filter_by(case_id=case.id).order_by(CounterpartyConfirmation.confirmed_at).all()
+    relationship = db.query(CounterpartyRelationship).filter_by(id=case.relationship_id, organization_id=case.organization_id).first()
     decisions = db.query(ReceivablesPilotDecision).filter_by(case_id=case.id, organization_id=case.organization_id).order_by(ReceivablesPilotDecision.created_at).all()
     receipts = db.query(CashReceipt).join(CashAllocation, CashAllocation.receipt_id == CashReceipt.id).filter(
         CashAllocation.case_id == case.id, CashAllocation.organization_id == case.organization_id,
@@ -159,6 +222,13 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
     verified_received = sum((allocation.amount for allocation in allocations if receipt_by_id.get(allocation.receipt_id) and receipt_by_id[allocation.receipt_id].verification_status in {"bank_evidence_reviewed", "counterparty_confirmed"}), Decimal("0.00"))
     today = datetime.now(NBO).date()
     aging = _aging(case, today)
+    info_response_after_request = False
+    if case.status == "submitted" and confirmations and confirmations[-1].response_status == "needs_information":
+        info_reply = db.query(ReceivableCaseEvent).filter_by(
+            case_id=case.id, organization_id=case.organization_id, event_type="claim_information_submitted",
+        ).order_by(ReceivableCaseEvent.created_at.desc()).first()
+        info_response_after_request = bool(info_reply and _as_utc(info_reply.created_at) > _as_utc(confirmations[-1].confirmed_at))
+    workflow = _workflow_snapshot(case, evidence, lines, confirmations, relationship, info_response_after_request)
     confirmed_amount = latest.confirmed_amount if latest and latest.confirmed_amount is not None else None
     return {
         "id": str(case.id), "organization_id": str(case.organization_id),
@@ -175,7 +245,7 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
         "currency": case.currency, "asserted_amount": str(case.asserted_amount),
         "status": case.status, "description": case.description,
         "created_at": case.created_at.isoformat(), "updated_at": case.updated_at.isoformat(),
-        "aging": aging,
+        "aging": aging, "workflow": workflow,
         "amounts": {
             "seller_asserted": str(case.asserted_amount),
             "latest_processor_confirmed": str(confirmed_amount) if confirmed_amount is not None else None,
@@ -229,7 +299,9 @@ def _case_with_events(db: Session, case: ReceivableCase) -> dict:
     events = db.query(ReceivableCaseEvent).filter_by(case_id=case.id, organization_id=case.organization_id).order_by(ReceivableCaseEvent.created_at).all()
     result["events"] = [{
         "id": str(event.id), "event_type": event.event_type, "from_status": event.from_status,
-        "to_status": event.to_status, "note": event.note, "created_at": event.created_at.isoformat(),
+        "to_status": event.to_status, "note": event.note,
+        "evidence_artifact_id": str(event.evidence_artifact_id) if event.evidence_artifact_id else None,
+        "created_at": event.created_at.isoformat(),
     } for event in events]
     return result
 
@@ -313,6 +385,156 @@ def seller_summary(user: User = Depends(current_user), db: Session = Depends(get
         "seller_asserted_balance_by_age_bucket": {key: str(value) for key, value in seller_balance_by_bucket.items()},
         "processor_confirmed_balance_by_age_bucket": {key: str(value) for key, value in confirmed_balance_by_bucket.items()},
         "as_of": datetime.now(NBO).date().isoformat(),
+    }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _median_or_none(values: list[float], digits: int = 1) -> float | None:
+    return round(float(median(values)), digits) if values else None
+
+
+@router.get("/cooperative/receivables/performance")
+def seller_performance(
+    window_days: int = Query(default=90, ge=30, le=365),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    """Report actual claim handling time and rework, grouped by claims opened in the window."""
+    org = _seller_org(db, user)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
+    cases = db.query(ReceivableCase).filter_by(organization_id=org.id).all()
+    cohort = [case for case in cases if _as_utc(case.created_at) >= cutoff]
+    cohort_ids = [case.id for case in cohort]
+
+    events_by_case: dict[UUID, list[ReceivableCaseEvent]] = {}
+    confirmations_by_case: dict[UUID, list[CounterpartyConfirmation]] = {}
+    if cohort_ids:
+        for event in db.query(ReceivableCaseEvent).filter(
+            ReceivableCaseEvent.organization_id == org.id,
+            ReceivableCaseEvent.case_id.in_(cohort_ids),
+        ).order_by(ReceivableCaseEvent.created_at).all():
+            events_by_case.setdefault(event.case_id, []).append(event)
+        for response in db.query(CounterpartyConfirmation).filter(
+            CounterpartyConfirmation.organization_id == org.id,
+            CounterpartyConfirmation.case_id.in_(cohort_ids),
+        ).order_by(CounterpartyConfirmation.confirmed_at).all():
+            confirmations_by_case.setdefault(response.case_id, []).append(response)
+
+    prep_hours: list[float] = []
+    response_hours: list[float] = []
+    resolution_days: list[float] = []
+    submitted_ids: set[UUID] = set()
+    responded_ids: set[UUID] = set()
+    resolved_ids: set[UUID] = set()
+    rework_ids: set[UUID] = set()
+    response_mix: dict[str, int] = {}
+    for case in cohort:
+        case_events = events_by_case.get(case.id, [])
+        submitted = next((event for event in case_events if event.event_type == "claim_submitted"), None)
+        responses = confirmations_by_case.get(case.id, [])
+        for response in responses:
+            response_mix[response.response_status] = response_mix.get(response.response_status, 0) + 1
+            if response.response_status in {"needs_information", "disputed", "rejected"}:
+                rework_ids.add(case.id)
+        if not submitted:
+            continue
+        submitted_ids.add(case.id)
+        submitted_at = _as_utc(submitted.created_at)
+        prep_hours.append(max(0.0, (submitted_at - _as_utc(case.created_at)).total_seconds() / 3600))
+        first_response = next((response for response in responses if _as_utc(response.confirmed_at) >= submitted_at), None)
+        if first_response:
+            responded_ids.add(case.id)
+            response_hours.append(max(0.0, (_as_utc(first_response.confirmed_at) - submitted_at).total_seconds() / 3600))
+        resolution = next((event for event in case_events if event.to_status in {"paid", "closed"}), None)
+        if resolution:
+            resolved_ids.add(case.id)
+            resolution_days.append(max(0.0, (_as_utc(resolution.created_at) - submitted_at).total_seconds() / 86400))
+
+    active_cases = [case for case in cases if case.status not in {"paid", "closed"}]
+    stage_counts: dict[str, int] = {}
+    latest_response_by_case: dict[UUID, CounterpartyConfirmation] = {}
+    latest_info_reply_at_by_case: dict[UUID, datetime] = {}
+    active_ids = [case.id for case in active_cases]
+    if active_ids:
+        for response in db.query(CounterpartyConfirmation).filter(
+            CounterpartyConfirmation.organization_id == org.id,
+            CounterpartyConfirmation.case_id.in_(active_ids),
+        ).order_by(CounterpartyConfirmation.confirmed_at).all():
+            latest_response_by_case[response.case_id] = response
+        for event in db.query(ReceivableCaseEvent).filter(
+            ReceivableCaseEvent.organization_id == org.id,
+            ReceivableCaseEvent.case_id.in_(active_ids),
+            ReceivableCaseEvent.event_type == "claim_information_submitted",
+        ).order_by(ReceivableCaseEvent.created_at).all():
+            latest_info_reply_at_by_case[event.case_id] = event.created_at
+    evidence_case_ids = {
+        row[0] for row in db.query(ReceivableEvidenceLink.case_id).filter(
+            ReceivableEvidenceLink.organization_id == org.id,
+            ReceivableEvidenceLink.case_id.in_([case.id for case in active_cases] or [UUID(int=0)]),
+        ).distinct().all()
+    }
+    line_case_ids = {
+        row[0] for row in db.query(ReceivableCaseLine.case_id).filter(
+            ReceivableCaseLine.organization_id == org.id,
+            ReceivableCaseLine.case_id.in_([case.id for case in active_cases] or [UUID(int=0)]),
+        ).distinct().all()
+    }
+    due_date_support_case_ids = {
+        row[0] for row in db.query(ReceivableEvidenceLink.case_id).filter(
+            ReceivableEvidenceLink.organization_id == org.id,
+            ReceivableEvidenceLink.evidence_role == "due_date_support",
+            ReceivableEvidenceLink.case_id.in_(active_ids or [UUID(int=0)]),
+        ).distinct().all()
+    }
+    for case in active_cases:
+        stage = "awaiting_processor" if case.status == "submitted" else "resolve_exception" if case.status == "disputed" else "track_balance" if case.status in {"partially_confirmed", "counterparty_confirmed", "partially_paid"} else "ready_to_submit" if case.status == "asserted" else "prepare_claim"
+        latest_response = latest_response_by_case.get(case.id)
+        reply_at = latest_info_reply_at_by_case.get(case.id)
+        request_is_open = latest_response and latest_response.response_status == "needs_information" and (
+            not reply_at or _as_utc(reply_at) <= _as_utc(latest_response.confirmed_at)
+        )
+        if case.status == "submitted" and request_is_open:
+            stage = "information_requested"
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
+    missing_due_date = sum(1 for case in active_cases if case.due_date is None or case.due_date_basis == "unknown" or case.id not in due_date_support_case_ids)
+    missing_evidence = sum(1 for case in active_cases if case.id not in evidence_case_ids)
+    missing_itemization = sum(1 for case in active_cases if case.id not in line_case_ids)
+    return {
+        "organization_id": str(org.id),
+        "window_days": window_days,
+        "cohort_basis": "claims opened during the selected period; later responses and resolutions are included as they arrive",
+        "period_start": cutoff.date().isoformat(),
+        "as_of_utc": now.isoformat(),
+        "cohort": {
+            "claims_opened": len(cohort), "claims_submitted": len(submitted_ids),
+            "claims_with_processor_response": len(responded_ids), "claims_paid_or_closed": len(resolved_ids),
+        },
+        "timing": {
+            "median_draft_to_submission_hours": _median_or_none(prep_hours),
+            "submission_timing_sample_size": len(prep_hours),
+            "median_submission_to_first_response_hours": _median_or_none(response_hours),
+            "first_response_sample_size": len(response_hours),
+            "median_submission_to_paid_or_closed_days": _median_or_none(resolution_days),
+            "resolution_sample_size": len(resolution_days),
+        },
+        "rework": {
+            "claims_with_rework_or_exception": len(rework_ids),
+            "rate_percent": round(len(rework_ids) * 100 / len(submitted_ids), 1) if submitted_ids else None,
+            "basis": "claim had at least one processor request for information, dispute, or rejection",
+            "processor_response_counts": response_mix,
+        },
+        "current_queue": {
+            "open_claims": len(active_cases), "stage_counts": stage_counts,
+            "missing_due_date_support": missing_due_date,
+            "missing_source_evidence": missing_evidence,
+            "missing_itemization": missing_itemization,
+        },
     }
 
 
@@ -422,6 +644,76 @@ def seller_case(case_id: UUID, user: User = Depends(current_user), db: Session =
     return _case_with_events(db, _seller_case(db, user, case_id))
 
 
+@router.post("/cooperative/receivables/cases/{case_id}/due-date-review")
+def review_case_due_date(
+    case_id: UUID, body: DueDateReviewCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _seller_case(db, user, case_id)
+    if case.status in {"paid", "closed"}:
+        raise HTTPException(409, "The due-date basis cannot be changed after the claim is closed")
+    if case.invoice_date and body.due_date < case.invoice_date:
+        raise HTTPException(422, "The reviewed due date cannot precede the invoice date")
+    artifact = _artifact(db, case.organization_id, body.evidence_artifact_id)
+    previous_date = case.due_date.isoformat() if case.due_date else "unknown"
+    previous_basis = case.due_date_basis
+    case.due_date = body.due_date
+    case.due_date_basis = "manual_review"
+    case.due_date_reviewed_by = user.id
+    case.due_date_reviewed_at = datetime.now(timezone.utc)
+    case.updated_at = datetime.now(timezone.utc)
+    existing_link = db.query(ReceivableEvidenceLink.id).filter_by(
+        organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+        evidence_role="due_date_support", source_locator="due-date-review",
+    ).first()
+    if not existing_link:
+        db.add(ReceivableEvidenceLink(
+            organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+            evidence_role="due_date_support", source_locator="due-date-review", linked_by=user.id,
+        ))
+    _event(
+        db, case, user, "due_date_reviewed", case.status, case.status,
+        f"Due date reviewed: {previous_date} ({previous_basis}) → {body.due_date.isoformat()} (manual_review). "
+        f"Evidence {artifact.filename} [{artifact.sha256[:12]}]. Reviewer note: {body.review_note}", artifact.id,
+    )
+    db.commit()
+    return _case_with_events(db, case)
+
+
+@router.post("/cooperative/receivables/cases/{case_id}/information-response")
+def submit_requested_information(
+    case_id: UUID, body: InformationResponseCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _seller_case(db, user, case_id)
+    if case.status != "submitted":
+        raise HTTPException(409, "Requested information can be sent only while the claim is with the processor")
+    latest_response = db.query(CounterpartyConfirmation).filter_by(
+        case_id=case.id, organization_id=case.organization_id,
+    ).order_by(CounterpartyConfirmation.confirmed_at.desc(), CounterpartyConfirmation.created_at.desc()).first()
+    if not latest_response or latest_response.response_status != "needs_information":
+        raise HTTPException(409, "The processor has not requested additional information on this claim")
+    linked_ids = {
+        row[0] for row in db.query(ReceivableEvidenceLink.artifact_id).filter(
+            ReceivableEvidenceLink.case_id == case.id,
+            ReceivableEvidenceLink.organization_id == case.organization_id,
+            ReceivableEvidenceLink.artifact_id.in_(body.evidence_artifact_ids),
+        ).all()
+    }
+    if linked_ids != set(body.evidence_artifact_ids):
+        raise HTTPException(422, "Every response file must already be attached to this claim")
+    artifacts = [_artifact(db, case.organization_id, artifact_id) for artifact_id in body.evidence_artifact_ids]
+    case.updated_at = datetime.now(timezone.utc)
+    references = ", ".join(f"{artifact.filename} [{artifact.sha256[:12]}]" for artifact in artifacts)
+    _event(
+        db, case, user, "claim_information_submitted", "submitted", "submitted",
+        f"Cooperative response to processor information request: {body.response_note}. Supporting files: {references}",
+        artifacts[0].id,
+    )
+    db.commit()
+    return _case_with_events(db, case)
+
+
 @router.post("/cooperative/receivables/cases/{case_id}/evidence", status_code=201)
 async def upload_case_evidence(
     case_id: UUID,
@@ -523,7 +815,7 @@ def processor_cases(user: User = Depends(current_user), db: Session = Depends(ge
     rows = db.query(ReceivableCase).filter(
         ReceivableCase.counterparty_organization_id == org.id,
         ReceivableCase.status != "draft", ReceivableCase.status != "asserted",
-    ).order_by(ReceivableCase.created_at.desc()).all()
+    ).order_by(ReceivableCase.updated_at.desc(), ReceivableCase.created_at.desc()).all()
     return [_case_json(db, row, include_private=False) for row in rows]
 
 

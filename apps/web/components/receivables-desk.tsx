@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDownToLine, CheckCircle2, Clock3, FileUp, Inbox, RefreshCw, Send, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, CheckCircle2, Clock3, FileUp, Inbox, RefreshCw, Send, ShieldCheck, TimerReset } from "lucide-react";
 import { API_URL, api } from "@/lib/api";
 
 type Row = Record<string, any>;
@@ -12,6 +12,14 @@ function amount(value: unknown, currency = "KES") {
   return Number.isFinite(numeric) ? new Intl.NumberFormat("en-KE", { style: "currency", currency, maximumFractionDigits: 2 }).format(numeric) : String(value);
 }
 
+function durationHours(value: unknown) {
+  if (value === null || value === undefined) return "—";
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) return "—";
+  if (hours < 24) return `${Math.round(hours)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
 function Label({ children }: { children: React.ReactNode }) { return <span className="receivable-label">{children}</span>; }
 
 export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: string; token: string; initialCaseId?: string }) {
@@ -19,6 +27,9 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
   const [cases, setCases] = useState<Row[]>([]);
   const [relationships, setRelationships] = useState<Row[]>([]);
   const [summary, setSummary] = useState<Row | null>(null);
+  const [performance, setPerformance] = useState<Row | null>(null);
+  const [performanceError, setPerformanceError] = useState("");
+  const [performanceWindow, setPerformanceWindow] = useState(90);
   const [selectedId, setSelectedId] = useState(initialCaseId);
   const [selected, setSelected] = useState<Row | null>(null);
   const [claimLines, setClaimLines] = useState<Row[]>([]);
@@ -38,6 +49,13 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
           api<Row>("/api/v1/cooperative/receivables/summary", token),
         ]);
         setRelationships(relationList); setSummary(totals);
+        setPerformanceError("");
+        try {
+          setPerformance(await api<Row>(`/api/v1/cooperative/receivables/performance?window_days=${performanceWindow}`, token));
+        } catch (e) {
+          setPerformance(null);
+          setPerformanceError(e instanceof Error ? e.message : "Performance measures could not be loaded");
+        }
       }
       const nextId = selectedId && list.some((item) => item.id === selectedId) ? selectedId : list[0]?.id || "";
       setSelectedId(nextId);
@@ -45,7 +63,7 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load receivables workspace");
     }
-  }, [processorMode, selectedId, token]);
+  }, [performanceWindow, processorMode, selectedId, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -140,6 +158,28 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
     if (success) form.reset();
   }
 
+  async function reviewDueDate(event: React.FormEvent<HTMLFormElement>, caseId: string) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const v = Object.fromEntries(new FormData(form));
+    const success = await run(() => api(`/api/v1/cooperative/receivables/cases/${caseId}/due-date-review`, token, {
+      method: "POST",
+      body: JSON.stringify({ due_date: v.due_date, evidence_artifact_id: v.evidence_artifact_id, review_note: v.review_note }),
+    }), "Due date review saved with its supporting source document.");
+    if (success) form.reset();
+  }
+
+  async function submitRequestedInformation(event: React.FormEvent<HTMLFormElement>, caseId: string) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const v = Object.fromEntries(new FormData(form));
+    const success = await run(() => api(`/api/v1/cooperative/receivables/cases/${caseId}/information-response`, token, {
+      method: "POST",
+      body: JSON.stringify({ evidence_artifact_ids: [v.evidence_artifact_id], response_note: v.response_note }),
+    }), "Your response and selected evidence are now in the processor's claim timeline.");
+    if (success) form.reset();
+  }
+
   const selectedCase = selected;
   return <section className="receivables-desk">
     <div className="receivables-toolbar">
@@ -166,6 +206,27 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
           ].filter((bucket) => summary?.aging_buckets?.[bucket] || summary?.seller_asserted_balance_by_age_bucket?.[bucket] || summary?.processor_confirmed_balance_by_age_bucket?.[bucket]).map((bucket) => <div className="receivable-aging-row" key={bucket}><span>{bucket.replaceAll("_", " ")}</span><b>{amount(summary?.seller_asserted_balance_by_age_bucket?.[bucket] || "0")}</b><b>{amount(summary?.processor_confirmed_balance_by_age_bucket?.[bucket] || "0")}</b></div>)}
           {!summary?.open_claim_count ? <p className="receivable-help receivable-span">Open a source-backed claim to see its age and separately attributed balances here.</p> : null}
         </div>
+      </section>
+      <section className="card receivable-performance" aria-label="Claim close performance">
+        <div className="receivable-performance-heading">
+          <div><p className="eyebrow">MEASURED CLAIM OPERATIONS</p><h2>How the close is moving</h2><p className="muted">Actual claims opened in the selected period. Response and settlement times use recorded events only.</p></div>
+          <label className="receivable-period-select"><span>Claim cohort</span><select value={performanceWindow} onChange={(event) => setPerformanceWindow(Number(event.target.value))}><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={180}>Last 180 days</option><option value={365}>Last 12 months</option></select></label>
+        </div>
+        {performanceError ? <div className="receivable-performance-error" role="status"><strong>Performance view unavailable</strong><span>{performanceError}</span><small>Claim register and ordinary case work remain available.</small></div> : performance ? <>
+          <div className="receivable-performance-metrics">
+            <div><span>Claims opened</span><strong>{performance.cohort?.claims_opened ?? 0}</strong><small>{performance.cohort?.claims_submitted ?? 0} submitted in this cohort</small></div>
+            <div><span>Draft to submission</span><strong>{durationHours(performance.timing?.median_draft_to_submission_hours)}</strong><small>{performance.timing?.submission_timing_sample_size ?? 0} measured submissions</small></div>
+            <div><span>Submission to first response</span><strong>{durationHours(performance.timing?.median_submission_to_first_response_hours)}</strong><small>{performance.timing?.first_response_sample_size ?? 0} claims with a response</small></div>
+            <div><span>Exceptions or rework</span><strong>{performance.rework?.rate_percent == null ? "—" : `${performance.rework.rate_percent}%`}</strong><small>{performance.rework?.claims_with_rework_or_exception ?? 0} claims · info request, dispute or rejection</small></div>
+            <div><span>Submission to paid or closed</span><strong>{performance.timing?.median_submission_to_paid_or_closed_days == null ? "—" : `${performance.timing.median_submission_to_paid_or_closed_days}d`}</strong><small>{performance.timing?.resolution_sample_size ?? 0} measured resolutions</small></div>
+          </div>
+          <div className="receivable-queue-readiness">
+            <div><strong>Current queue</strong><span>{performance.current_queue?.open_claims ?? 0} open · {performance.current_queue?.missing_source_evidence ?? 0} without source evidence · {performance.current_queue?.missing_due_date_support ?? 0} without source-linked due date review</span></div>
+            <div className="receivable-stage-counts">{Object.entries(performance.current_queue?.stage_counts || {}).map(([stage, count]) => <span key={stage}><b>{String(count)}</b>{stage.replaceAll("_", " ")}</span>)}</div>
+          </div>
+          <small className="receivable-metric-basis">Cohort: {performance.cohort_basis}. Rework rate uses submitted claims as its denominator. This is an operational measure, not a legal arrears determination.</small>
+          {!performance.cohort?.claims_opened ? <div className="receivable-performance-empty"><TimerReset size={17} /><span><strong>No claims in this period yet</strong><small>Measures will populate from real claim activity; no demo values are shown.</small></span></div> : null}
+        </> : <div className="receivable-performance-empty"><TimerReset size={17} /><span><strong>Loading measured claim activity</strong><small>These measures are calculated from this cooperative’s recorded cases and events.</small></span></div>}
       </section>
       <div className="receivable-layout">
         <div className="receivable-column">
@@ -214,7 +275,7 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
               <span className="receivable-case-icon"><Clock3 size={15} /></span><span className="receivable-case-main"><strong>{row.source_reference}</strong><small>{row.status.replaceAll("_", " ")} · {row.aging?.bucket?.replaceAll("_", " ")}</small></span><b>{amount(row.asserted_amount, row.currency)}</b>
             </button>) : <div className="receivable-empty"><Inbox size={18} /><strong>No processor claims yet</strong><span>Open a claim from an actual statement. Demo claims are not loaded here.</span></div>}</div>
           </section>
-          {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode={false} onUpload={uploadEvidence} onAction={(path: string, label: string) => void run(() => api(path, token, { method: "POST" }), label)} onDownload={() => void download(`/api/v1/cooperative/receivables/cases/${selectedCase.id}/evidence-export`, `terravanta-claim-${selectedCase.source_reference}.zip`)} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} onRecordDecision={recordDecision} onReceipt={recordAndAllocate} /> : null}
+          {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode={false} onUpload={uploadEvidence} onAction={(path: string, label: string) => void run(() => api(path, token, { method: "POST" }), label)} onDownload={() => void download(`/api/v1/cooperative/receivables/cases/${selectedCase.id}/evidence-export`, `terravanta-claim-${selectedCase.source_reference}.zip`)} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} onRecordDecision={recordDecision} onReceipt={recordAndAllocate} onReviewDueDate={reviewDueDate} onSubmitInformation={submitRequestedInformation} /> : null}
         </div>
       </div>
     </> : <>
@@ -232,11 +293,16 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
   </section>;
 }
 
-function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction, onDownload, onDownloadArtifact, onRespond, onRecordDecision, onReceipt }: any) {
+function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction, onDownload, onDownloadArtifact, onRespond, onRecordDecision, onReceipt, onReviewDueDate, onSubmitInformation }: any) {
   const c = caseRecord; const amounts = c.amounts || {};
   return <section className="card receivable-card receivable-detail">
     <div className="panel-title"><div><p className="eyebrow">CLAIM FILE · {c.status.replaceAll("_", " ").toUpperCase()}</p><h2>{c.source_reference}</h2><p className="muted">{c.source_document_type.replaceAll("_", " ")} · Created {new Date(c.created_at).toLocaleDateString("en-KE")}</p></div>{!processorMode && c.status !== "draft" ? <button className="button button-outline" type="button" onClick={onDownload}><ArrowDownToLine size={14} />Evidence export</button> : null}</div>
     <p className="receivable-description">{c.description || "No description provided. Source statement remains the basis for the seller assertion."}</p>
+    {c.workflow ? <section className="receivable-workflow" aria-label="Claim workflow progress">
+      <div className="receivable-workflow-heading"><div><p className="eyebrow">STAGE-GATED CLAIM FILE</p><h3>{c.workflow.label}</h3><p>{c.workflow.next_action}</p></div><span>{c.workflow.steps?.filter((step: Row) => step.complete).length || 0}/{c.workflow.steps?.length || 0} milestones</span></div>
+      <ol className="receivable-workflow-steps">{c.workflow.steps?.map((step: Row) => <li key={step.key} className={step.complete ? "complete" : "pending"}><span>{step.complete ? <CheckCircle2 size={13} /> : <i />}</span><b>{step.label}</b></li>)}</ol>
+      {c.workflow.blockers?.length ? <div className="receivable-workflow-blockers">{c.workflow.blockers.map((blocker: Row) => <p key={blocker.code} className={`blocker-${blocker.severity}`}><strong>{blocker.severity === "required" ? "Required" : blocker.severity === "waiting" ? "Waiting" : "Review"}</strong>{blocker.message}</p>)}</div> : null}
+    </section> : null}
     <div className="receivable-amount-grid">
       <div><Label>Seller asserted</Label><strong>{amount(amounts.seller_asserted, c.currency)}</strong></div>
       <div><Label>Processor confirmed</Label><strong>{amount(amounts.latest_processor_confirmed, c.currency)}</strong></div>
@@ -244,7 +310,24 @@ function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction
       <div><Label>Reviewed receipts allocated</Label><strong>{amount(amounts.evidence_reviewed_receipts_allocated, c.currency)}</strong></div>
     </div>
     <div className="receivable-age"><Clock3 size={15} /><span><strong>{c.aging?.days_past_due === null ? "Due date not reviewed" : c.aging?.bucket === "due_today" ? "Due today" : c.aging?.days_past_due === 0 ? "Not overdue" : `${c.aging?.days_past_due} days past due`}</strong><small>{c.aging?.bucket?.replaceAll("_", " ")} · As of {c.aging?.as_of}{c.aging?.days_past_due === null && c.aging?.days_since_invoice !== null ? ` · ${c.aging?.days_since_invoice} days since invoice` : ""}</small></span></div>
-    {c.lines?.length ? <div className="receivable-subsection"><h3>Claim components <small>seller source attribution</small></h3><div className="receivable-line-list">{c.lines.map((line: Row) => <div key={line.id}><span>{line.line_type.replaceAll("_", " ")} · {line.direction} · {line.source_reference || "No source ref"}{line.occurred_on ? ` · ${line.occurred_on}` : ""}</span><strong>{amount(line.amount, line.currency)}</strong></div>)}</div></div> : null}
+    {!processorMode && c.status !== "paid" && c.status !== "closed" ? <form className="receivable-date-review" onSubmit={(event) => onReviewDueDate(event, c.id)}>
+      <div><h3>Review the due date <small>{c.workflow?.due_date_source_supported ? "source linked" : "supporting source needed"}</small></h3><p>Past-due aging uses this reviewer-entered date and attached evidence. It is not a legal conclusion.</p></div>
+      <label className="field"><span>Due date</span><input name="due_date" type="date" required defaultValue={c.due_date || ""} /></label>
+      <label className="field"><span>Supporting source document</span><select name="evidence_artifact_id" required defaultValue={c.evidence?.[0]?.id || ""} disabled={!c.evidence?.length}><option value="" disabled>Select attached evidence</option>{c.evidence?.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
+      <label className="field receivable-span"><span>What in the document supports this date?</span><textarea name="review_note" minLength={5} maxLength={1000} required placeholder="For example: invoice page 1 states payment due 30 days after 12 Oct 2026." /></label>
+      <button className="button button-outline receivable-span" disabled={busy || !c.evidence?.length}>Save date review and source link</button>
+      {!c.evidence?.length ? <small className="receivable-help receivable-span">Attach an invoice, contract extract or processor statement above before reviewing the due date.</small> : null}
+    </form> : null}
+    {!processorMode && c.workflow?.stage === "information_requested" ? <form className="receivable-response receivable-information-response" onSubmit={(event) => onSubmitInformation(event, c.id)}>
+      <h3>Send the requested information</h3><p>Attach any new source files above, then select one file and describe what it answers. The processor sees this in the claim timeline when its inbox refreshes.</p>
+      <label className="field"><span>Supporting file already attached to this claim</span><select name="evidence_artifact_id" required defaultValue=""><option value="" disabled>Select a source file</option>{c.evidence?.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
+      <label className="field"><span>Response note</span><textarea name="response_note" minLength={5} maxLength={2000} required placeholder="Explain which requested item this source document answers." /></label>
+      <button className="button button-primary" disabled={busy || !c.evidence?.length}>Send response to processor</button>
+    </form> : null}
+    {c.lines?.length ? <div className="receivable-subsection"><h3>Claim components <small>source-linked line items</small></h3><div className="receivable-line-list">{c.lines.map((line: Row) => {
+      const sourceFile = c.evidence?.find((file: Row) => file.id === line.evidence_artifact_id);
+      return <div className="receivable-component-row" key={line.id}><span><strong>{line.line_type.replaceAll("_", " ")} · {line.direction} · {line.source_reference || "No source ref"}</strong><small>Line {line.line_number}{line.occurred_on ? ` · ${line.occurred_on}` : ""}{line.source_locator ? ` · ${line.source_locator}` : " · locator not recorded"}{sourceFile ? ` · ${sourceFile.filename}` : " · source file not linked"}</small></span><strong>{amount(line.amount, line.currency)}</strong>{sourceFile && onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(sourceFile.id, sourceFile.filename)}><ArrowDownToLine size={12} />Source</button> : null}</div>;
+    })}</div></div> : null}
     <div className="receivable-subsection"><h3>Source evidence <small>{c.evidence?.length || 0} file(s)</small></h3>
       {c.evidence?.length ? <div className="receivable-evidence-list">{c.evidence.map((f: Row) => <div key={f.id}><span><strong>{f.filename}</strong><small>{f.artifact_type} · SHA-256 {f.sha256.slice(0, 14)}… · {f.size_bytes ? `${Math.ceil(f.size_bytes / 1024)} KB` : "size not listed"} · File ID {f.id}</small></span><span className="receivable-file-actions"><span className="evidence-source">{f.source_party}</span>{onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(f.id, f.filename)}><ArrowDownToLine size={12} />Download</button> : null}</span></div>)}</div> : <p className="receivable-help">No files attached. A source document is required before the cooperative can assert the claim.</p>}
       {!processorMode && c.status !== "paid" && c.status !== "closed" ? <form className="receivable-upload" onSubmit={onUpload}><input name="file" type="file" accept=".pdf,.csv,application/pdf,text/csv" required /><select name="artifact_type" defaultValue="processor_statement"><option value="processor_statement">Processor statement</option><option value="delivery_evidence">Delivery / weighbridge evidence</option><option value="invoice">Invoice</option><option value="payment_evidence">Payment evidence</option><option value="other">Other evidence</option></select><input name="source_reference" placeholder="Document reference (optional)" /><button className="button button-outline" disabled={busy}><FileUp size={13} />Attach privately</button><small>Private authenticated storage · PDF/CSV only · {c.status === "draft" ? "Attach before asserting." : "Add follow-up evidence to the case record."}</small></form> : null}
@@ -287,6 +370,7 @@ function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction
         <button className="button button-outline receivable-span" disabled={busy}>Record receipt and allocation</button>
       </form> : <p className="receivable-help">The seller-asserted balance is fully allocated. Record a receipt against another open claim if additional settlement money arrived.</p>}</div>
     </> : null}
+    {c.events?.length ? <details className="receivable-activity"><summary>Claim activity · {c.events.length} recorded events</summary><ol>{c.events.map((event: Row) => <li key={event.id}><span className="receivable-activity-icon"><CheckCircle2 size={13} /></span><div><strong>{event.event_type.replaceAll("_", " ")}</strong><small>{new Date(event.created_at).toLocaleString("en-KE")}{event.from_status || event.to_status ? ` · ${event.from_status || "created"} → ${event.to_status || "recorded"}` : ""}</small>{event.note ? <p>{event.note}</p> : null}</div></li>)}</ol></details> : null}
     {c.aging ? <small className="receivable-footnote">Aging is an operational view of entered dates and source basis, not a legal conclusion about arrears, default, or interest.</small> : null}
   </section>;
 }
