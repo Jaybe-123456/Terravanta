@@ -3,7 +3,15 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Terravanta | Cooperative receivables and farm records",
   description: "Explore Terravanta’s evidence-backed processor receivables workflow, cooperative settlement tools and connected farm records.",
+  alternates: { canonical: "/product" },
   robots: { index: true, follow: true },
+  openGraph: {
+    title: "Terravanta | Cooperative receivables and farm records",
+    description: "A source-linked processor receivables workflow and connected farm records for cooperatives and Kenyan mixed farms.",
+    url: "/product",
+    siteName: "Terravanta",
+    type: "website",
+  },
 };
 
 const workflow = [

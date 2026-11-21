@@ -31,6 +31,19 @@ Set the following Vercel **Production** variables and redeploy:
 
 Never use a Supabase service-role key in the browser or Vercel `NEXT_PUBLIC_*` variables. The Next.js session route stores the Supabase refresh token in an HttpOnly, same-origin cookie; FastAPI validates the short-lived bearer JWT and provisions the Terravanta user profile on `/api/v1/auth/onboard`. Self-registration grants only the farmer role. A verified email matching an existing legacy farmer profile is linked to its original Terravanta user UUID by migration `0008_tenant_rls`, preserving farm history; conflicting staff identities require operator review. Staff roles are assigned through the trusted operator workflow.
 
+## Google indexing
+
+The public product page is `/product`; the private sign-in route is marked `noindex`. The sitemap is `/sitemap.xml`, and `/robots.txt` advertises it. In Google Search Console, add a **URL-prefix** property with the exact address `https://terravanta-five.vercel.app/`. This works with the Vercel-provided hostname; a Domain property would require DNS verification for a domain you control.
+
+Choose HTML-tag verification in Search Console and copy the `content` token from its `google-site-verification` meta tag. Add these Vercel Production variables, then redeploy:
+
+| Variable | Value |
+| --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | `https://terravanta-five.vercel.app` |
+| `GOOGLE_SITE_VERIFICATION` | The token value only, without the HTML tag or quotes |
+
+After the deployment is live, return to Search Console and click **Verify**. Open **Sitemaps**, submit `sitemap.xml`, then use **URL Inspection** for `https://terravanta-five.vercel.app/product` and choose **Request indexing**. Google treats a sitemap and an indexing request as hints; neither guarantees when or whether the page appears in results. Keep the public product page useful and link to it from public profiles or partner sites you control.
+
 ## Render database roles and environment
 
 Keep `MIGRATIONS_DATABASE_URL` connected as the Render database owner. `DATABASE_URL` must use a separate runtime login that is a member of the non-login `terravanta_app` role created by Alembic. Do not point the API runtime at the owner connection string. The runtime role is limited to the application table grants and RLS policies; it cannot bypass RLS or run DDL.
