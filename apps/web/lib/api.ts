@@ -19,7 +19,7 @@ export type Session = { access_token: string; refresh_token?: string; expires_at
 export type AuthRedirect = { session: Session | null; passwordRecovery: boolean };
 
 export async function loginDemo(role: string): Promise<Session> {
-  const response = await fetch(`${API_URL}/api/v1/auth/demo-login?role=${encodeURIComponent(role)}`, { method: "POST", cache: "no-store" });
+  const response = await fetch(`${API_URL}/api/v1/auth/demo-login?role=${encodeURIComponent(role)}`, { method: "POST", cache: "no-store", signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error("Could not reach the API. Start the local services and retry.");
   return response.json();
 }
@@ -130,6 +130,7 @@ async function storeSupabaseRefreshToken(refreshToken: string): Promise<void> {
   const response = await fetch("/api/session", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }), cache: "no-store",
+    signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
@@ -164,7 +165,7 @@ export async function restoreSession(): Promise<Session | null> {
       return session;
     } catch { return null; }
   }
-  const response = await fetch("/api/session", { cache: "no-store" }).catch(() => null);
+  const response = await fetch("/api/session", { cache: "no-store", signal: AbortSignal.timeout(8000) }).catch(() => null);
   if (!response?.ok) return null;
   const restored = await response.json().catch(() => null);
   if (!restored?.access_token) return null;
@@ -240,16 +241,17 @@ export async function api<T = any>(path: string, token: string, init: RequestIni
 }
 
 export async function writeApi<T = any>(path: string, token: string, body: Record<string, unknown>): Promise<T | { queuedOffline: true }> {
-  try {
-    return await api<T>(path, token, { method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": crypto.randomUUID() } });
-  } catch (error) {
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      await enqueue(path, "POST", JSON.stringify(body), queueOwnerId());
-      window.dispatchEvent(new Event("terravanta-queue-change"));
-      return { queuedOffline: true };
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    const ownerId = queueOwnerId();
+    const safeCreatePath = /^\/api\/v1\/farms(?:\/[\w-]+\/(?:plots|animals|feed-batches|feed-allocations|manure-records|compost-batches|compost-applications|production-records|deliveries))?$|^\/api\/v1\/animals\/[\w-]+\/health-events$/;
+    if (!safeCreatePath.test(path) || body.verify_record === true) {
+      throw new Error("This action needs an internet connection. It has not been saved offline.");
     }
-    throw error;
+    await enqueue(path, "POST", JSON.stringify(body), ownerId);
+    window.dispatchEvent(new Event("terravanta-queue-change"));
+    return { queuedOffline: true };
   }
+  return api<T>(path, token, { method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": crypto.randomUUID() } });
 }
 
 export async function flushOfflineQueue(token: string): Promise<{ synced: number; pending: number }> {

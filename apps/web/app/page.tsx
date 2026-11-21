@@ -77,7 +77,8 @@ export default function Home() {
   const [aiResponse, setAiResponse] = useState<AnyRecord | null>(null);
   const [documentResult, setDocumentResult] = useState<AnyRecord | null>(null);
   const [toast, setToast] = useState<Toast>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [sessionChecking, setSessionChecking] = useState(true);
   const [workspaceError, setWorkspaceError] = useState("");
   const [saving, setSaving] = useState(false);
   const [online, setOnline] = useState(true);
@@ -200,7 +201,9 @@ export default function Home() {
         if (!cancelled) { const message = error instanceof Error ? error.message : "API unavailable"; setAuthError(message); setToast({ text: message, error: true }); setLoading(false); }
       }
     };
-    void start();
+    void start().finally(() => {
+      if (!cancelled) { setSessionChecking(false); setLoading(false); }
+    });
     return () => { cancelled = true; };
   }, [demoMode]);
 
@@ -347,7 +350,7 @@ export default function Home() {
   async function saveConsent(recipient: { grantee_org_id?: string; grantee_email?: string }) {
     setSaving(true);
     try {
-      await writeApi(`/api/v1/farms/${farmId}/consents`, token, { scope: "delivery_summary", ...recipient });
+      await api(`/api/v1/farms/${farmId}/consents`, token, { method: "POST", body: JSON.stringify({ scope: "delivery_summary", ...recipient }) });
       setToast({ text: "Delivery summary sharing enabled for the selected cooperative" }); await reload();
     } catch (error) { setToast({ text: error instanceof Error ? error.message : "Could not update sharing", error: true }); }
     finally { setSaving(false); }
@@ -509,8 +512,7 @@ export default function Home() {
     ? settlementCloses.filter((close) => close.status !== "approved").reduce((total, close) => total + Number(close.unresolved_exception_count ?? close.pending_review_count ?? 0), 0)
     : role === "veterinarian" ? vetQueue.filter((item) => !item.verified).length : 0;
 
-  if (loading && !token) return <main className="boot-screen"><span className="boot-mark"><Leaf size={25} /></span><LoaderCircle className="spinner" size={20} /><p>Opening Terravanta workspace…</p></main>;
-  if (!token) return <SignInScreen demoMode={demoMode} passwordRecovery={passwordRecovery} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onForgot={requestPasswordReset} onReset={resetPassword} onExitRecovery={exitPasswordRecovery} onDemo={switchRole} />;
+  if (!token) return <SignInScreen demoMode={demoMode} checkingSession={sessionChecking} passwordRecovery={passwordRecovery} busy={authBusy} error={authError} message={authMessage} onSubmit={signIn} onRegister={registerFarmer} onForgot={requestPasswordReset} onReset={resetPassword} onExitRecovery={exitPasswordRecovery} onDemo={switchRole} />;
 
   return <div className="app-shell">
     <div className={`sidebar-wrap ${mobileNav ? "open" : ""}`}><Sidebar active={active} onChange={onNav} role={role} userName={currentUserName} farmName={isCoop ? "Cooperative workspace" : isProcessor ? "Processor AP workspace" : farmLabel} location={isCoop ? "Cooperative organization" : isProcessor ? "Supplier claims" : `${farm?.subcounty || "Location pending"}, ${farm?.county || "Kenya"}`} workCount={workCount} /><button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} /></div>
@@ -543,13 +545,14 @@ export default function Home() {
   </div>;
 }
 
-function SignInScreen({ demoMode, passwordRecovery, busy, error, message, onSubmit, onRegister, onForgot, onReset, onExitRecovery, onDemo }: { demoMode: boolean; passwordRecovery: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onForgot: (event: React.FormEvent<HTMLFormElement>) => void; onReset: (event: React.FormEvent<HTMLFormElement>) => void; onExitRecovery: () => void; onDemo: (role: string) => void }) {
+function SignInScreen({ demoMode, checkingSession, passwordRecovery, busy, error, message, onSubmit, onRegister, onForgot, onReset, onExitRecovery, onDemo }: { demoMode: boolean; checkingSession: boolean; passwordRecovery: boolean; busy: boolean; error: string; message: string; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; onRegister: (event: React.FormEvent<HTMLFormElement>) => void; onForgot: (event: React.FormEvent<HTMLFormElement>) => void; onReset: (event: React.FormEvent<HTMLFormElement>) => void; onExitRecovery: () => void; onDemo: (role: string) => void }) {
   const [registering, setRegistering] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const resetMode = passwordRecovery && !demoMode;
   const submit = resetMode ? onReset : recovering ? onForgot : registering ? onRegister : onSubmit;
   const title = demoMode ? "Open the farm workspace" : resetMode ? "Choose a new password" : recovering ? "Reset your password" : registering ? "Create a farmer account" : "Sign in to Terravanta";
-  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="#"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{title}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
+  return <main className="auth-shell"><section className="auth-card"><a className="brand auth-brand" href="/product"><span className="brand-mark"><Leaf size={21} /></span><span>Terravanta<small>FARM INTELLIGENCE</small></span></a><p className="eyebrow">FARM RECORDS · VETERINARY REVIEW · TRACEABILITY</p><h1>{title}</h1><p className="muted">One connected record for farmers, veterinarians and cooperatives.</p>
+    {checkingSession && !demoMode ? <div className="auth-session-check" role="status"><LoaderCircle className="spinner" size={14} />Checking for an existing sign-in…</div> : null}
     {demoMode ? <>{error ? <div className="auth-error" role="alert">{error}</div> : null}<div className="synthetic-notice"><ShieldCheck size={17} /><span><strong>Synthetic demo environment</strong><small>Every farm, animal, person and delivery shown here is fictional.</small></span></div><div className="auth-demo-actions"><button className="button button-primary" disabled={busy} onClick={() => onDemo("farmer")}>Farmer workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("veterinarian")}>Veterinarian workspace</button><button className="button button-outline" disabled={busy} onClick={() => onDemo("cooperative_admin")}>Cooperative portal</button></div><small className="auth-footnote">Demo access is available only when explicitly enabled in local configuration.</small></> : <>
       {!SUPABASE_CONFIGURED ? <div className="auth-error" role="alert">Supabase Auth is not configured. Add your project URL and publishable anon key to `.env`, then rebuild the web service.</div> : null}
       {error ? <div className="auth-error" role="alert">{error}</div> : null}
@@ -567,6 +570,7 @@ function SignInScreen({ demoMode, passwordRecovery, busy, error, message, onSubm
         <button type="button" className="auth-mode-toggle" disabled={busy} onClick={() => setRegistering((value) => !value)}>{registering ? "Already registered? Sign in" : "New farmer? Create an account"}</button>
       </>}
       <small className="auth-footnote">Supabase manages sign-in, email confirmation, password recovery and sessions. New sign-ups start with farmer access; veterinarian, cooperative and processor workspaces require an assigned organization or farm role.</small>
+      <a className="auth-product-link" href="/product">Explore Terravanta’s workflows and product overview <ArrowRight size={13} /></a>
     </>}</section><p className="auth-bottom">Farm-level data access is checked by the Terravanta API and PostgreSQL policies.</p></main>;
 }
 

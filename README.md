@@ -137,6 +137,12 @@ npm run build
 
 The API workflow tests use an isolated in-memory SQLite database. Frontend tests cover IndexedDB offline capture and account-scoped replay. Docker Compose can be syntax-checked without starting the engine using `docker compose --env-file .env.example config --quiet`.
 
+## Browser access and offline behavior
+
+The sign-in and registration screen is rendered immediately while the browser checks for an existing Supabase session. The public `/product` route describes the receivables and farm-record workflows without exposing account data; `/sitemap.xml` lists that public page. Keep Vercel Deployment Protection disabled for the production deployment that farmers and cooperative users need to open without a Vercel account. Supabase still authenticates users, and the API/PostgreSQL authorization rules still protect private records.
+
+Offline support is currently limited to a device-local IndexedDB queue for signed-in users creating supported farm, animal, health, crop, feed, compost, production and delivery records. The browser must have loaded the app and the user must have signed in online on that device first. Explicit sharing, clinical verification, AI, file uploads, cooperative settlement and receivables actions require a connection. A cold start without a connection does not restore the private workspace or cached farm data; offline queues are not encrypted or merged across devices. Treat this as offline capture, not a complete offline-first product. Before using it for sensitive live records, add device threat-model review, protected local data, conflict handling and reliable server idempotency for replayed writes.
+
 ## Deploy to production
 
 Production uses GitHub Actions for CI, Render for the FastAPI/PostGIS API and database, and Vercel for the Next.js frontend. Pushing to `main` in `Jaybe-123456/Terravanta` runs API tests, a PostGIS migration check and web checks/build. Render’s Git deployment is set to wait for checks to pass; Vercel should require the same GitHub checks through Project Settings → Deployment Checks. Those provider integrations perform deployment without production secrets in GitHub Actions.
