@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import secrets
 from uuid import uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid
@@ -317,6 +318,7 @@ class VeterinaryContactRequest(Base):
     message: Mapped[str] = mapped_column(Text, default="", nullable=False)
     urgency: Mapped[str] = mapped_column(String(20), default="routine", nullable=False)
     preferred_contact_method: Mapped[str] = mapped_column(String(20), default="phone_call", nullable=False)
+    conversation_code: Mapped[str] = mapped_column(String(12), unique=True, default=lambda: secrets.token_hex(6).upper(), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
@@ -348,6 +350,73 @@ class VeterinaryContactMessage(Base):
         CheckConstraint("source_channel IN ('in_app', 'whatsapp')", name="ck_vet_contact_message_channel"),
         Index("ix_vet_contact_messages_request_created", "request_id", "created_at"),
     )
+
+
+class WhatsAppPreference(Base):
+    """One verified WhatsApp endpoint and explicit channel consent per identity."""
+    __tablename__ = "whatsapp_preferences"
+    user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    phone_e164: Mapped[str | None] = mapped_column(String(20), nullable=True, unique=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_version: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    consent_source: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
+
+
+class WhatsAppLinkChallenge(Base):
+    """Short-lived one-use challenge; only a hash is stored."""
+    __tablename__ = "whatsapp_link_challenges"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    consent_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    consent_accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (Index("ix_whatsapp_pairing_user_created", "user_id", "created_at"),)
+
+
+class CommunicationOutbox(Base):
+    """Durable, consent-gated WhatsApp delivery job for a conversation message."""
+    __tablename__ = "communication_outbox"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    recipient_user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    farm_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=True, index=True)
+    request_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("veterinary_contact_requests.id", ondelete="CASCADE"), nullable=True, index=True)
+    message_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("veterinary_contact_messages.id", ondelete="SET NULL"), nullable=True, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    conversation_code: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False, index=True)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(180), nullable=True, unique=True)
+    last_error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(220), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
+    __table_args__ = (
+        CheckConstraint("status IN ('queued', 'sending', 'sent', 'delivered', 'read', 'failed', 'cancelled', 'blocked')", name="ck_communication_outbox_status"),
+        CheckConstraint("attempts >= 0", name="ck_communication_outbox_attempts"),
+        Index("ix_communication_outbox_ready", "status", "next_attempt_at"),
+    )
+
+
+class MetaWebhookEvent(Base):
+    """Deduplication and processing receipt; raw Meta payloads are never retained."""
+    __tablename__ = "meta_webhook_events"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    provider_event_id: Mapped[str] = mapped_column(String(220), nullable=False, unique=True)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    processing_status: Mapped[str] = mapped_column(String(20), default="received", nullable=False)
+    safe_error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (CheckConstraint("processing_status IN ('received', 'processed', 'ignored', 'failed')", name="ck_meta_webhook_event_status"),)
 
 
 class ClinicalObservation(Base):

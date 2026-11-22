@@ -46,6 +46,7 @@ from .security import bearer, current_identity, current_user, get_scoped_db, iss
 from .seed import FARMER_ID, FARM_ID, seed
 from .receivables import router as receivables_router
 from .notifications import router as notifications_router
+from .whatsapp_routes import router as whatsapp_router
 from .workflows import append_domain_event, schedule_health_follow_up
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -88,6 +89,7 @@ app = FastAPI(title="Terravanta API", version="1.0.0", description="Veterinary-f
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(receivables_router)
 app.include_router(notifications_router)
+app.include_router(whatsapp_router)
 
 
 def dump(row, exclude: set[str] | None = None) -> dict:
@@ -540,12 +542,17 @@ def create_vet_contact_request(
             action_section="veterinary",
             idempotency_key=f"vet-contact:{row.id}:requested:{vet_id}",
         ))
+    if settings.whatsapp_delivery_enabled and db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT terravanta_private.enqueue_whatsapp_contact_request(:request_id)"),
+            {"request_id": row.id},
+        )
     audit(db, user, "veterinary.contact_requested", "veterinary_contact_request", str(row.id), farm.id, {"urgency": row.urgency})
     db.commit()
     db.refresh(row)
     result = serialize_vet_contact_request(db, row)
     result["notified_veterinarians"] = len(vet_ids)
-    result["message_delivery"] = "in_app"
+    result["message_delivery"] = "in_app; WhatsApp alert queued only for assigned veterinarians with active channel consent when delivery is enabled"
     return result
 
 
@@ -722,6 +729,11 @@ def create_vet_contact_message(
             action_section="veterinary",
             idempotency_key=f"{idempotency_key}:notification:{recipient_id}",
         ))
+    if settings.whatsapp_delivery_enabled and db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT terravanta_private.enqueue_whatsapp_contact_message(:message_id)"),
+            {"message_id": message.id},
+        )
     audit(db, user, "veterinary.contact_message_sent", "veterinary_contact_message", str(message.id), row.farm_id, {"request_id": str(row.id), "channel": "in_app"})
     db.commit()
     db.refresh(message)

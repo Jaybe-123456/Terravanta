@@ -104,6 +104,30 @@ Set these Vercel Production variables, then redeploy:
 
 The API accepts the stable production origin. Add another origin to Render only when it is intentionally trusted to access production farm data. Never expose a service-role key to the browser.
 
+## Optional WhatsApp channel
+
+Migration `0013_whatsapp_delivery_safety` creates the non-login `terravanta_worker` group role and grants it the cross-user queue claim/finish functions. Do not grant this group role to the API runtime login. After the migration succeeds, create a dedicated login for the background worker:
+
+```sql
+CREATE ROLE terravanta_worker_runtime LOGIN INHERIT NOBYPASSRLS;
+GRANT terravanta_worker TO terravanta_worker_runtime;
+```
+
+Set its password interactively with `\password terravanta_worker_runtime` in psql, then set Render worker `WHATSAPP_WORKER_DATABASE_URL` to the internal database URL using that login. The normal worker `DATABASE_URL` remains the restricted `terravanta_runtime` URL for scheduled workflow polling. Do not grant `terravanta_worker` to `terravanta_runtime`.
+
+The same migration creates `terravanta_webhook`, a separate non-login group role with limited channel-table permissions and RLS policies. Create a distinct login for signed Meta webhook processing:
+
+```sql
+CREATE ROLE terravanta_webhook_runtime LOGIN INHERIT NOBYPASSRLS;
+GRANT terravanta_webhook TO terravanta_webhook_runtime;
+```
+
+Set its password interactively with `\password terravanta_webhook_runtime`, then set the API service's `WHATSAPP_WEBHOOK_DATABASE_URL` to the internal URL using that login. Grant only `terravanta_webhook` to this login; never grant it `terravanta_app`. The webhook group has only channel-specific table and column permissions. The API's migration owner URL is not used to process webhook events.
+
+The WhatsApp Blueprint values keep sending disabled. API pairing and webhook handling require `WHATSAPP_WEBHOOK_DATABASE_URL`, `WHATSAPP_PAIRING_SECRET`, `META_WA_BUSINESS_NUMBER`, `META_WA_PHONE_NUMBER_ID`, `META_WA_APP_SECRET`, and `META_WA_VERIFY_TOKEN`. Worker sending additionally requires its distinct database URL, `META_WA_ACCESS_TOKEN`, an explicitly reviewed `META_WA_GRAPH_API_VERSION`, and an approved utility template name/language. Set `META_WA_SEND_ENABLED=true` in both API and worker only after those values and the Meta webhook are ready. The template must have one body parameter for the contact-request code. Keep every Meta credential backend-only.
+
+Meta's webhook URL is `https://terravanta.onrender.com/api/v1/integrations/meta/whatsapp/webhook`; configure the same verify token in the Meta webhook setup. Production pairing and delivery are unverified until an end-to-end message and receipt have been observed.
+
 ## Evidence storage and live records
 
 The Blueprint attaches a one-instance persistent disk for private evidence files. Do not scale the API horizontally while using local-disk evidence. Before scaling, move to a private S3-compatible bucket, disable public access and test retrieval, deletion and backup. Malware scanning and automatic retention/deletion are not implemented.

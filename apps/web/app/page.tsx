@@ -552,7 +552,7 @@ export default function Home() {
 
         {loading && token ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
         {workspaceError && !loading ? <div className="workspace-load-error" role="alert"><div><strong>Some workspace data could not be loaded</strong><p>{workspaceError}</p></div><button type="button" className="button button-outline" onClick={() => void reload()}><RefreshCw size={14} />Retry</button></div> : null}
-        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} initialCaseId={receivableFocusId} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} onOpenReceivable={openReceivable} token={token} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} />{farmId ? <FarmDecisionPanel farmId={farmId} token={token} onNavigate={onNav} /> : null}</> : null}
+        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} initialCaseId={receivableFocusId} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} onOpenReceivable={openReceivable} token={token} /> : isProcessor ? active === "settings" ? <div className="stacked"><CooperativeAccessControls /><WhatsAppSettings token={token} /></div> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} />{farmId ? <FarmDecisionPanel farmId={farmId} token={token} onNavigate={onNav} /> : null}</> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} recordFollowUp={recordHealthFollowUp} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -561,7 +561,7 @@ export default function Home() {
         {active === "traceability" && !isCoop ? <TraceabilityView passport={passport} deliveries={deliveries} cooperatives={cooperatives} busy={saving} saveConsent={saveConsent} revokeConsent={revokeConsent} /> : null}
         {active === "assistant" && !isCoop ? <AssistantView animals={animals} busy={saving} askAssistant={askAssistant} response={aiResponse} documentResult={documentResult} extractDocument={extractDocument} reviewDocument={reviewDocument} /> : null}
         {active === "reports" && !isCoop ? <ReportsView dashboard={dashboard} alerts={alerts} passport={passport} /> : null}
-        {active === "settings" && !isCoop ? <SettingsView role={role} userName={currentUserName} farm={farm} passport={passport} online={online} queued={queued} /> : null}
+        {active === "settings" && !isCoop ? <SettingsView role={role} userName={currentUserName} farm={farm} passport={passport} online={online} queued={queued} token={token} /> : null}
       </div>
       <footer className="page-footer"><span>Terravanta</span><span>Records stay attributed to their source · {farm?.code || "consent-controlled"}</span><a href={`${API_URL}/docs`} target="_blank" rel="noreferrer">API documentation <ArrowRight size={13} /></a></footer>
     </main>
@@ -825,6 +825,7 @@ function VetContactConversation({ request, token, role, onClose }: { request: An
     {error ? <div className="workspace-load-error" role="alert"><p>{error}</p><button type="button" className="button button-outline button-small" onClick={() => void loadMessages()}>Retry</button></div> : null}
     <div className="vet-message-list" aria-live="polite">{loading ? <p className="muted">Loading conversation…</p> : items.length ? items.map((item) => <article className={`vet-message ${item.is_mine ? "mine" : ""}`} key={item.id}><div><strong>{item.is_mine ? "You" : item.sender_name}</strong><time>{new Date(item.created_at).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</time></div><p>{item.body}</p><small>{item.channel === "whatsapp" ? "WhatsApp" : "Terravanta inbox"}</small></article>) : <p className="muted">No replies yet. Use this thread to coordinate the contact request.</p>}</div>
     {canReply ? <form className="vet-message-compose" onSubmit={sendMessage}><label className="field"><span className="sr-only">Message</span><textarea value={draft} onChange={(event) => setDraft(event.target.value)} required maxLength={4000} rows={2} placeholder="Write a message…" /></label><button className="button button-primary" disabled={sending || !draft.trim()}><Send size={14} />{sending ? "Sending…" : "Send"}</button></form> : <p className="muted conversation-closed-note">Replies are available to the farmer and the veterinarian assigned to this request.</p>}
+    {request.conversation_code ? <small className="conversation-whatsapp-help">From a linked WhatsApp number, continue here with <code>TV {request.conversation_code} your message</code>. Linking is optional; this conversation remains available in Terravanta.</small> : null}
     <small className="conversation-disclaimer">Messages coordinate contact and are not verified clinical records. For emergencies, contact local veterinary help directly.</small>
   </section>;
 }
@@ -1055,10 +1056,84 @@ function ReportsView({ dashboard, alerts, passport }: AnyRecord) {
   return <div className="two-column"><section className="card"><PanelTitle eyebrow="FARM INDICATORS" title="Transparent record summary" description="Counts come directly from farm records; no predictive model is used." /><div className="report-grid">{Object.entries(dashboard?.stats || {}).map(([key, value]) => <div key={key}><span>{key.replaceAll("_", " ")}</span><strong>{value as string | number}</strong><small>Recorded value</small></div>)}</div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="RULE-BASED ALERTS" title={`${alerts.length} current alerts`} />{alerts.length ? alerts.map((alert: AnyRecord) => <div className="report-alert" key={alert.id}><AlertTriangle size={16} /><div><strong>{alert.title}</strong><small>{alert.trigger}</small><p>{alert.next_action}</p></div></div>) : <Empty title="No rule alerts" detail="Alerts are calculated from visible follow-up, stock and production rules." />}</section><section className="card"><PanelTitle eyebrow="DATA PROVENANCE" title="Passport sources" /><div className="provenance-list"><p><i className="source-dot farmer-dot" /> Farmer submitted <span>{passport?.farm?.verification_status || "—"}</span></p><p><i className="source-dot vet-dot" /> Veterinarian verified <span>{passport?.counts?.health_events_verified || 0} events</span></p><p><i className="source-dot system-dot" /> System generated <span>Rule alerts</span></p></div></section></div></div>;
 }
 
-function SettingsView({ role, userName, farm, passport, online, queued }: AnyRecord) {
+function SettingsView({ role, userName, farm, passport, online, queued, token }: AnyRecord) {
   const initials = String(userName || "TV").split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join("").toUpperCase();
   const organizationAccessCopy = "This account has farmer access. Ask the Terravanta pilot operator to invite a verified Supabase identity and assign cooperative or processor organization membership. Keep farm-record ownership separate; role changes require operator review.";
-  return <div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div>;
+  return <div className="settings-layout"><div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div><WhatsAppSettings token={token} /></div>;
+}
+
+function WhatsAppSettings({ token }: { token: string }) {
+  const [status, setStatus] = useState<AnyRecord | null>(null);
+  const [deliveries, setDeliveries] = useState<AnyRecord[]>([]);
+  const [pairing, setPairing] = useState<AnyRecord | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      const [nextStatus, nextDeliveries] = await Promise.all([
+        api<AnyRecord>("/api/v1/me/whatsapp", token),
+        api<AnyRecord[]>("/api/v1/me/whatsapp/deliveries", token),
+      ]);
+      setStatus(nextStatus); setDeliveries(nextDeliveries); setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "WhatsApp status could not be loaded");
+    } finally { setLoading(false); }
+  }, [token]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!pairing || status?.linked) return;
+    const deadline = new Date(pairing.expires_at).getTime();
+    const timer = window.setInterval(() => {
+      if (Date.now() >= deadline) { window.clearInterval(timer); return; }
+      void refresh();
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [pairing, refresh, status?.linked]);
+
+  async function beginPairing() {
+    if (!consent || busy) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api<AnyRecord>("/api/v1/me/whatsapp/pairing", token, { method: "POST", body: JSON.stringify({ consent_accepted: true }) });
+      setPairing(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create a WhatsApp pairing code");
+    } finally { setBusy(false); }
+  }
+
+  async function revoke() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      await api("/api/v1/me/whatsapp", token, { method: "DELETE" });
+      setPairing(null); setConsent(false); await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not disconnect WhatsApp");
+    } finally { setBusy(false); }
+  }
+
+  const linked = Boolean(status?.linked);
+  const expired = pairing ? new Date(pairing.expires_at).getTime() <= Date.now() : false;
+  const deliveryLabels: Record<string, string> = { queued: "Queued", sending: "Sending", sent: "Sent", delivered: "Delivered", read: "Read", failed: "Failed", cancelled: "Cancelled", blocked: "Blocked" };
+  return <section className="card whatsapp-settings-card">
+    <PanelTitle eyebrow="WHATSAPP · OPTIONAL CHANNEL" title="Link a verified number" description="Continue an existing veterinarian contact request from WhatsApp. Farm records stay protected by your Terravanta account and request permissions." action={<StatusPill tone={linked ? "green" : status?.pairing_available ? "amber" : "neutral"}>{linked ? "Number linked" : status?.pairing_available ? "Ready to link" : "Not configured"}</StatusPill>} />
+    {error ? <div className="workspace-load-error" role="alert"><p>{error}</p><button type="button" className="button button-outline button-small" onClick={() => void refresh()}><RefreshCw size={13} />Retry</button></div> : null}
+    {loading ? <p className="muted">Loading channel status…</p> : linked && status ? <>
+      <div className="whatsapp-linked-row"><span className="whatsapp-mark"><MessageCircle size={18} /></span><div><strong>{status.phone_masked}</strong><small>Verified {status.verified_at ? new Date(status.verified_at).toLocaleDateString("en-KE") : ""} · consent active</small></div><button type="button" className="button button-outline button-small" disabled={busy} onClick={() => void revoke()}>Disconnect</button></div>
+      <p className="muted small-copy">You may receive opted-in veterinary contact notifications and reply in the matching request thread. Thread text is relayed through WhatsApp only when both participants have active channel consent. Revoking consent cancels queued messages; a message already submitted to Meta cannot be recalled.</p>
+    </> : status?.pairing_available ? <>
+      <label className="check-row whatsapp-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span><strong>I agree to WhatsApp messages about my veterinarian contact requests.</strong><small>To continue a request, text you send may be relayed by Meta to the other opted-in participant. Outside Meta’s 24-hour reply window, only an approved template with the request code is sent; your message text stays in the Terravanta inbox. Do not send sensitive clinical details. Terravanta links the number only after you send a one-time code from that account. You can disconnect and revoke consent here at any time.</small></span></label>
+      <button type="button" className="button button-primary" disabled={!consent || busy} onClick={() => void beginPairing()}><MessageCircle size={15} />{busy ? "Preparing link…" : "Create secure WhatsApp link"}</button>
+      {pairing && !expired ? <div className="whatsapp-pairing-result"><p>Open WhatsApp and send this prefilled message to Terravanta:</p><code>TVLINK {pairing.pairing_code}</code><a className="button button-outline button-small" href={pairing.whatsapp_link} target="_blank" rel="noreferrer">Open WhatsApp <ArrowRight size={13} /></a><small>This code expires {new Date(pairing.expires_at).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" })} and works once. Keep this page open while we confirm the signed WhatsApp message.</small></div> : pairing ? <div className="inline-note"><AlertTriangle size={15} /><span>That link expired. Create a new one to connect your number.</span></div> : null}
+    </> : <div className="inline-note"><AlertTriangle size={15} /><span>WhatsApp linking is not configured for this deployment yet. You can still use the Terravanta veterinarian request inbox. Linking is unavailable until the backend webhook and business number are configured.</span></div>}
+    {!loading && status?.delivery_available === false ? <p className="whatsapp-channel-note">Outbound WhatsApp alerts are switched off by the service operator. Linking and signed inbound messages may still be available; no outgoing message will be sent until delivery is configured.</p> : null}
+    {deliveries.length ? <div className="whatsapp-delivery-list"><strong>Recent message delivery</strong>{deliveries.slice(0, 5).map((item) => <div key={item.id}><span>{deliveryLabels[item.status] || item.status}</span><small>{new Date(item.updated_at).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</small>{item.error_code ? <small className="delivery-error">{item.error_code}</small> : null}</div>)}</div> : null}
+    <small className="whatsapp-security-note"><ShieldCheck size={14} /> Only messages from the verified, consented number can enter a request you participate in. Meta signatures are checked before processing; duplicate receipts do not duplicate messages.</small>
+  </section>;
 }
 
 function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, activeClose, busy, importFile, openRun, reviewItem, createClose, openClose, reviewException, approveClose, downloadPack, onNavigate, onOpenReceivable, token }: AnyRecord) {
@@ -1066,7 +1141,7 @@ function CooperativeWorkspace({ section, deliveries, runs, activeRun, closes, ac
   if (section === "settlements") return <SettlementCloseWorkbench closes={closes} activeClose={activeClose} busy={busy} createClose={createClose} openClose={openClose} reviewException={reviewException} approveClose={approveClose} downloadPack={downloadPack} />;
   if (section === "traceability") return <CooperativeMemberRecordsView deliveries={deliveries} runs={runs} activeRun={activeRun} busy={busy} importFile={importFile} openRun={openRun} reviewItem={reviewItem} />;
   if (section === "reports") return <CooperativeCloseHistory closes={closes} openClose={openClose} onNavigate={onNavigate} />;
-  if (section === "settings") return <CooperativeAccessControls />;
+  if (section === "settings") return <div className="stacked"><CooperativeAccessControls /><WhatsAppSettings token={token} /></div>;
   return <Empty title="This cooperative view is not available" detail="Choose close desk, payout settlements, shared member records or close history." />;
 }
 

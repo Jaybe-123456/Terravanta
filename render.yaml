@@ -37,6 +37,20 @@ services:
         value: "15000000"
       - key: AI_TIMEOUT_SECONDS
         value: "35"
+      - key: META_WA_SEND_ENABLED
+        value: "false"
+      - key: WHATSAPP_PAIRING_SECRET
+        sync: false
+      - key: WHATSAPP_WEBHOOK_DATABASE_URL
+        sync: false
+      - key: META_WA_BUSINESS_NUMBER
+        sync: false
+      - key: META_WA_APP_SECRET
+        sync: false
+      - key: META_WA_VERIFY_TOKEN
+        sync: false
+      - key: META_WA_PHONE_NUMBER_ID
+        sync: false
     disk:
       name: terravanta-uploads
       mountPath: /var/data
@@ -59,6 +73,20 @@ services:
         value: worker
       - key: DATABASE_URL
         sync: false
+      - key: WHATSAPP_WORKER_DATABASE_URL
+        sync: false
+      - key: META_WA_SEND_ENABLED
+        value: "false"
+      - key: META_WA_ACCESS_TOKEN
+        sync: false
+      - key: META_WA_PHONE_NUMBER_ID
+        sync: false
+      - key: META_WA_GRAPH_API_VERSION
+        sync: false
+      - key: META_WA_NOTIFICATION_TEMPLATE
+        sync: false
+      - key: META_WA_TEMPLATE_LANGUAGE
+        value: en
       - key: WORKFLOW_POLL_SECONDS
         value: "30"
       - key: ENABLE_SYNTHETIC_DATA

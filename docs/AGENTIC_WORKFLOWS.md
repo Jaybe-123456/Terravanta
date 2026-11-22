@@ -18,7 +18,7 @@ This is deterministic workflow automation. It does not call an AI model, send em
 
 Migration `0011_veterinary_contact_requests` adds a request and response lifecycle. A farmer can submit a farm-scoped request with an optional animal, urgency, short observation, and preferred contact method. The API notifies veterinarians assigned to that farm. A veterinarian claims the request by accepting it, and only that veterinarian can then mark it contacted. Pending requests can be cancelled by their requester. Status transitions are audited, represented in the farm event log, validated at the API, constrained by RLS, and protected by a PostgreSQL transition trigger.
 
-The selected contact method is only a preference. The current implementation sends an in-app notification to assigned veterinarians; it does not place a telephone call or send WhatsApp. If no veterinarian is assigned to the farm, the API rejects the request with a clear action. This is not an emergency dispatch mechanism.
+The selected contact method is only a preference and does not place a telephone call. The request always creates an in-app notification; when the WhatsApp safety layer is configured and outbound delivery is explicitly enabled, an additional generic alert is queued only for assigned veterinarians with verified numbers and active consent. If no veterinarian is assigned to the farm, the API rejects the request with a clear action. This is not an emergency dispatch mechanism.
 
 ## Farm-level decision support
 
@@ -54,6 +54,8 @@ The worker service needs:
 | `ENABLE_SYNTHETIC_DATA` | `false` |
 
 The background worker is a separate Render service and may add hosting cost. Deploy the API migration before the worker starts processing. The worker retries a failed poll without deleting pending queue rows.
+
+For WhatsApp delivery, the migration creates a distinct `terravanta_worker` database group role. Create a `terravanta_worker_runtime` login, grant it only to that group, and set `WHATSAPP_WORKER_DATABASE_URL` on the worker. Do not grant the worker group to `terravanta_runtime`; it can claim other users' WhatsApp queue entries. Keep `META_WA_SEND_ENABLED=false` until Meta credentials, the approved template, the signed webhook and this separate database URL are configured.
 
 The API service remains `SERVICE_MODE=api` (the default), and continues to receive `MIGRATIONS_DATABASE_URL`, Supabase configuration, and its normal environment variables.
 

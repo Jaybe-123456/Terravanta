@@ -52,6 +52,27 @@ AdminSessionLocal = SessionLocal if admin_engine is engine else sessionmaker(
     bind=admin_engine, autoflush=False, expire_on_commit=False,
 )
 
+# The delivery worker has a separate database principal in production. It is
+# granted only the worker queue functions plus inherited application rights;
+# the normal API runtime role cannot claim the global phone/message queue.
+whatsapp_worker_url = settings.whatsapp_worker_database_url or settings.database_url
+whatsapp_worker_engine = engine if whatsapp_worker_url == settings.database_url else create_engine(
+    whatsapp_worker_url, pool_pre_ping=True,
+)
+WhatsAppWorkerSessionLocal = SessionLocal if whatsapp_worker_engine is engine else sessionmaker(
+    bind=whatsapp_worker_engine, autoflush=False, expire_on_commit=False,
+)
+
+# Signed Meta ingress gets its own narrowly privileged principal. In local
+# development, it can reuse SQLite; production requires a separate login.
+whatsapp_webhook_url = settings.whatsapp_webhook_database_url or settings.database_url
+whatsapp_webhook_engine = engine if whatsapp_webhook_url == settings.database_url else create_engine(
+    whatsapp_webhook_url, pool_pre_ping=True,
+)
+WhatsAppWebhookSessionLocal = SessionLocal if whatsapp_webhook_engine is engine else sessionmaker(
+    bind=whatsapp_webhook_engine, autoflush=False, expire_on_commit=False,
+)
+
 
 def get_db():
     db = SessionLocal()

@@ -6,8 +6,9 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 from .config import settings
-from .db import SessionLocal
+from .db import SessionLocal, WhatsAppWorkerSessionLocal
 from .models import Animal, AnimalHealthEvent, FarmMember, Notification, WorkflowRun
+from .whatsapp import WhatsAppSendError, send_whatsapp_message
 
 log = logging.getLogger("terravanta.workflow_worker")
 
@@ -72,19 +73,109 @@ def process_due_workflows_once(limit: int = 100) -> int:
         return processed
 
 
+def process_whatsapp_outbox_once(limit: int = 5) -> int:
+    """Claim and deliver queued WhatsApp messages only when Meta sending is explicitly enabled."""
+    if not settings.whatsapp_delivery_configured:
+        return 0
+    with WhatsAppWorkerSessionLocal() as db:
+        if db.get_bind().dialect.name != "postgresql":
+            return 0
+        rows = db.execute(
+            text("SELECT * FROM terravanta_private.claim_whatsapp_deliveries(:limit)"),
+            {"limit": max(1, min(limit, 200))},
+        ).mappings().all()
+        db.commit()
+
+    processed = 0
+    for row in rows:
+        try:
+            with WhatsAppWorkerSessionLocal() as db:
+                authorized = db.execute(
+                    text("SELECT terravanta_private.authorize_whatsapp_delivery(:delivery_id)"),
+                    {"delivery_id": row["outbox_id"]},
+                ).scalar_one()
+                db.commit()
+            if not authorized:
+                processed += 1
+                continue
+            result = send_whatsapp_message(
+                to_phone=row["destination_phone"],
+                body=row["message_body"],
+                conversation_code=row["conversation_code"],
+                in_service_window=bool(row["in_service_window"]),
+            )
+            with WhatsAppWorkerSessionLocal() as db:
+                db.execute(text("""
+                    SELECT terravanta_private.finish_whatsapp_delivery(
+                        :delivery_id, 'sent', :provider_message_id, '', false
+                    )
+                """), {"delivery_id": row["outbox_id"], "provider_message_id": result.provider_message_id})
+                db.commit()
+        except WhatsAppSendError as exc:
+            safe_code = exc.safe_code
+            result_status = "blocked" if exc.blocked else "failed"
+            with WhatsAppWorkerSessionLocal() as db:
+                db.execute(text("""
+                    SELECT terravanta_private.finish_whatsapp_delivery(
+                        :delivery_id, :result, NULL, :error_code, :retryable
+                    )
+                """), {
+                    "delivery_id": row["outbox_id"],
+                    "result": result_status,
+                    "error_code": safe_code,
+                    "retryable": exc.retryable,
+                })
+                db.commit()
+            log.warning("WhatsApp delivery %s ended with %s", row["outbox_id"], safe_code)
+        except Exception as exc:
+            log.error("WhatsApp delivery %s failed before completion (%s)", row["outbox_id"], type(exc).__name__)
+            with WhatsAppWorkerSessionLocal() as db:
+                db.execute(text("""
+                    SELECT terravanta_private.finish_whatsapp_delivery(
+                        :delivery_id, 'failed', NULL, 'worker_internal_error', true
+                    )
+                """), {"delivery_id": row["outbox_id"]})
+                db.commit()
+        processed += 1
+    return processed
+
+
+def maintain_whatsapp_retention_once() -> int:
+    """Scrub message bodies at 90 days and expire pairing/webhook dedupe data."""
+    if not settings.whatsapp_worker_database_url:
+        return 0
+    with WhatsAppWorkerSessionLocal() as db:
+        if db.get_bind().dialect.name != "postgresql":
+            return 0
+        count = db.execute(
+            text("SELECT terravanta_private.maintain_whatsapp_retention()"),
+        ).scalar_one()
+        db.commit()
+        return int(count)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if settings.service_mode != "worker":
         raise RuntimeError("Set SERVICE_MODE=worker before starting the workflow worker")
     interval = max(5, min(settings.workflow_poll_seconds, 300))
+    last_retention_maintenance = 0.0
     log.info("Workflow worker started; poll interval=%ss", interval)
     while True:
         try:
             count = process_due_workflows_once()
             if count:
                 log.info("Processed %s scheduled workflow step(s)", count)
-        except Exception:
-            log.exception("Workflow poll failed; queued work remains available for retry")
+            delivered = process_whatsapp_outbox_once()
+            if delivered:
+                log.info("Handled %s WhatsApp outbox item(s)", delivered)
+            if time.time() - last_retention_maintenance >= 86_400:
+                pruned = maintain_whatsapp_retention_once()
+                last_retention_maintenance = time.time()
+                if pruned:
+                    log.info("Applied WhatsApp retention maintenance to %s row(s)", pruned)
+        except Exception as exc:
+            log.error("Workflow poll failed; queued work remains available for retry (%s)", type(exc).__name__)
         time.sleep(interval)
 
 

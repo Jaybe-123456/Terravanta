@@ -251,6 +251,16 @@ class VeterinaryContactMessageCreate(BaseModel):
         return value
 
 
+class WhatsAppPairingCreate(BaseModel):
+    consent_accepted: bool
+
+    @model_validator(mode="after")
+    def require_explicit_consent(self):
+        if not self.consent_accepted:
+            raise ValueError("WhatsApp consent is required to link this channel")
+        return self
+
+
 class FarmAssistantRequest(BaseModel):
     question: str = Field(min_length=4, max_length=1200)
     allow_external_processing: bool = False

@@ -34,7 +34,7 @@
 - There are no bundled approved veterinary references, no veterinarian-reviewed AI evaluation set, and no evidence that the heuristic safety filter catches every unsafe output. Do not use AI output for diagnosis, prescribing or treatment decisions.
 - Normalized tables exist for vaccination/treatment/reproduction/quality/laboratory records, but some still lack dedicated end-user workflows. No milk is certified safe and no agronomic/nutrient balance is inferred.
 - There is no cooperative ERP, processor, scale/hardware, bank/M-Pesa, buyer identity or lab integration. Contracts cannot yet be managed/confirmed from the UI; there is no source export adapter, OCR matching, lender portal, automatic follow-up, legal arrears determination or payment initiation. The existing settlement close only covers downstream cooperative member payouts and does not prove a processor receivable. No authorized real claim, processor response, budget-owner decision or paid repeat is in evidence; no PMF, savings, arrears recovery or revenue is claimed.
-- WhatsApp Business Platform is not connected: there is no Meta business number, verified phone pairing, channel consent, webhook, delivery outbox or messaging credential. A farmer's preferred WhatsApp contact method is only stored as a preference; contact requests currently notify assigned veterinarians in the Terravanta inbox.
+- WhatsApp safety and delivery code is implemented, but no Meta business number, credentials, approved template or live webhook has been configured and verified. Outbound delivery stays off by default. The channel is not production-ready until the worker role is provisioned and a complete pairing, request, reply and receipt flow is observed.
 - Add production observability, backups/restore drills, idempotent API persistence, rate-limit storage suitable for multiple workers, privacy/retention review, penetration testing, accessibility checks and on-call support before onboarding real farms.
 
 ## Next build sequence
@@ -45,6 +45,6 @@
 4. Ask for the paid-repeat decision, record the actual price unit and attach the approval artifact if approved.
 5. Compare the result against incumbent MIS and finance operations; add scanning/retention controls and one reusable adapter before repeating with another period.
 6. Configure and continue validating Supabase accounts, offline farm record workflows and consent controls; keep farmer/veterinary features as supporting systems rather than presumed proof of the commercial wedge.
-7. Connect a Meta WhatsApp Business number, implement authenticated phone pairing, explicit channel consent, signed webhook ingestion, deduplication and delivery-status tracking; pilot contact-request acknowledgement before enabling farm-data conversations.
+7. Provision Meta, apply migration `0013_whatsapp_delivery_safety`, create the dedicated worker database login, and validate a complete WhatsApp pilot before enabling outbound messages.
 8. Validate NVIDIA access, data terms, evidence retrieval, structured extraction, unsafe outputs, latency and availability with the target account; leave AI optional and out of financial adjudication.
 9. Replicate to a second cooperative/processor relationship only after paid repeat, counterparty response, safe access behavior and viable service cost in the first relationship.

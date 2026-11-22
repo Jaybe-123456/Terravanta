@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 from pydantic import field_validator, model_validator
@@ -35,9 +36,21 @@ class Settings(BaseSettings):
     evidence_max_file_bytes: int = 15_000_000
     ai_timeout_seconds: int = 35
     workflow_poll_seconds: int = 30
+    whatsapp_worker_database_url: str = ""
+    whatsapp_webhook_database_url: str = ""
+    whatsapp_pairing_secret: str = ""
+    meta_wa_access_token: str = ""
+    meta_wa_phone_number_id: str = ""
+    meta_wa_business_number: str = ""
+    meta_wa_app_secret: str = ""
+    meta_wa_verify_token: str = ""
+    meta_wa_graph_api_version: str = ""
+    meta_wa_notification_template: str = ""
+    meta_wa_template_language: str = "en"
+    meta_wa_send_enabled: bool = False
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
 
-    @field_validator("database_url", "migrations_database_url", mode="before")
+    @field_validator("database_url", "migrations_database_url", "whatsapp_worker_database_url", "whatsapp_webhook_database_url", mode="before")
     @classmethod
     def normalize_postgres_driver(cls, value):
         # Managed PostgreSQL providers commonly expose postgresql:// URLs.
@@ -64,6 +77,37 @@ class Settings(BaseSettings):
             return f"{self.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
         return ""
 
+    @property
+    def whatsapp_webhook_configured(self) -> bool:
+        return bool(
+            self.meta_wa_app_secret
+            and self.meta_wa_verify_token
+            and self.meta_wa_phone_number_id
+            and (self.whatsapp_webhook_database_url or self.app_env.lower() != "production")
+        )
+
+    @property
+    def whatsapp_pairing_configured(self) -> bool:
+        return bool(
+            self.whatsapp_webhook_configured
+            and self.meta_wa_business_number
+            and self.whatsapp_pairing_secret
+        )
+
+    @property
+    def whatsapp_delivery_configured(self) -> bool:
+        return bool(
+            self.meta_wa_send_enabled
+            and self.meta_wa_access_token
+            and self.meta_wa_phone_number_id
+            and self.meta_wa_graph_api_version
+            and self.meta_wa_notification_template
+        )
+
+    @property
+    def whatsapp_delivery_enabled(self) -> bool:
+        return self.meta_wa_send_enabled
+
     @model_validator(mode="after")
     def require_production_auth_configuration(self):
         if self.app_env.lower() == "production":
@@ -87,6 +131,25 @@ class Settings(BaseSettings):
             raise ValueError("EVIDENCE_S3_BUCKET is required when S3 evidence storage is enabled")
         if self.evidence_max_file_bytes < 1024 or self.evidence_max_file_bytes > 50_000_000:
             raise ValueError("EVIDENCE_MAX_FILE_BYTES must be between 1024 and 50000000")
+        return self
+
+    @model_validator(mode="after")
+    def validate_whatsapp_configuration(self):
+        if self.app_env.lower() == "production" and (self.meta_wa_app_secret or self.meta_wa_verify_token):
+            if not self.whatsapp_webhook_database_url:
+                raise ValueError("Production Meta webhook requires WHATSAPP_WEBHOOK_DATABASE_URL using the restricted webhook role")
+        if self.meta_wa_send_enabled and self.service_mode == "worker":
+            missing = [name for name, value in (
+                ("META_WA_ACCESS_TOKEN", self.meta_wa_access_token),
+                ("META_WA_PHONE_NUMBER_ID", self.meta_wa_phone_number_id),
+                ("META_WA_GRAPH_API_VERSION", self.meta_wa_graph_api_version),
+                ("META_WA_NOTIFICATION_TEMPLATE", self.meta_wa_notification_template),
+                ("WHATSAPP_WORKER_DATABASE_URL", self.whatsapp_worker_database_url),
+            ) if not value]
+            if missing:
+                raise ValueError("WhatsApp sending is enabled but required settings are missing: " + ", ".join(missing))
+            if not re.fullmatch(r"v\d+\.\d+", self.meta_wa_graph_api_version):
+                raise ValueError("META_WA_GRAPH_API_VERSION must be explicitly set, for example vXX.X")
         return self
 
 

@@ -917,6 +917,28 @@ a { color: inherit; }
 .vet-message-compose .field textarea { min-height: 56px; max-height: 150px; }
 .vet-message-compose > .button { min-height: 40px; }
 .conversation-disclaimer, .conversation-closed-note { margin: 0; color: #89948a; font-size: 9px; line-height: 1.5; }
+.conversation-whatsapp-help { display: block; padding: 9px 11px; border: 1px solid #dce9dc; border-radius: 8px; background: #f7faf6; color: #657667; font-size: 9px; line-height: 1.55; }
+.conversation-whatsapp-help code { display: inline-block; margin: 3px 2px; padding: 3px 6px; border-radius: 5px; background: #edf4ec; color: #285c44; font-size: 9px; }
+.settings-layout { display: grid; gap: 14px; }
+.whatsapp-settings-card { display: grid; gap: 13px; }
+.whatsapp-settings-card .panel-title { margin-bottom: 0; }
+.whatsapp-linked-row { display: flex; align-items: center; gap: 11px; padding: 11px; border: 1px solid #e8eee8; border-radius: 9px; background: #fbfcfa; }
+.whatsapp-mark { display: grid; place-items: center; width: 35px; height: 35px; flex: 0 0 auto; border-radius: 9px; background: #eaf3e9; color: #326447; }
+.whatsapp-linked-row > div { display: grid; flex: 1; gap: 4px; }
+.whatsapp-linked-row strong { color: #35483a; font-size: 10px; }
+.whatsapp-linked-row small, .whatsapp-pairing-result small { color: #879287; font-size: 8px; line-height: 1.5; }
+.whatsapp-consent { margin: 0; }
+.whatsapp-pairing-result { display: grid; justify-items: start; gap: 8px; padding: 12px; border: 1px solid #dfeade; border-radius: 9px; background: #f7faf6; }
+.whatsapp-pairing-result p { margin: 0; color: #586b5b; font-size: 9px; }
+.whatsapp-pairing-result > code { padding: 7px 9px; border-radius: 6px; background: #eaf2e8; color: #285c44; font-size: 13px; font-weight: 700; letter-spacing: .4px; }
+.whatsapp-channel-note { margin: 0; color: #8a7441; font-size: 8px; line-height: 1.5; }
+.whatsapp-delivery-list { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid #edf0ed; }
+.whatsapp-delivery-list > strong { color: #59665b; font-size: 9px; }
+.whatsapp-delivery-list > div { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 10px; color: #5c695f; font-size: 8px; }
+.whatsapp-delivery-list small { color: #929c94; font-size: 7px; }
+.whatsapp-delivery-list .delivery-error { color: #a64b3e; }
+.whatsapp-security-note { display: flex; align-items: flex-start; gap: 6px; color: #849085; font-size: 8px; line-height: 1.5; }
+.whatsapp-security-note svg { flex: 0 0 auto; color: #648467; }
 @media (max-width: 760px) {
   .farm-intelligence-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .farm-intelligence-production > div { grid-template-columns: 1fr; }
