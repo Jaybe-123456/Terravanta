@@ -51,6 +51,7 @@ For each authenticated API request, `get_scoped_db` binds the verified Supabase 
 | --- | --- |
 | Users and roles | A user sees their own profile and roles. Public sign-up may insert only the farmer role. Staff membership is operator-managed. |
 | Farms, plots, livestock, health, feed and production | Farm membership gates reads; owner/farmer memberships gate general writes; assigned veterinarian membership gates clinical verification updates. |
+| Farm events, reminders and veterinary contact requests | Farm-scoped RLS and authenticated role checks; event history is audit-linked; reminders create notifications for individual recipients; a contact request can only be claimed by a veterinarian assigned to that farm. |
 | Sharing | A farm member manages consent. Delivery-summary consent exposes delivery and lot rows plus a narrow farm card projection. It does not grant crop, animal, veterinary, laboratory or location access. |
 | Cooperative settlement | Cooperative membership gates its reconciliation and settlement-close records. Child rows inherit the parent run/close boundary. |
 | Processor receivables | Seller and named processor memberships can read their linked claim; seller assertions and processor responses remain separate records. Unrelated organizations cannot read the case. |
@@ -78,6 +79,8 @@ No Supabase Edge Function is needed for the current product workflows: the domai
 Use an Edge Function only when a concrete integration needs short-lived, globally distributed ingress—for example, a processor settlement webhook after that processor supplies its signature, retry, event-ID and delivery contract. Such a function should validate the sender signature, enforce replay/idempotency, minimize the payload, and call a versioned FastAPI integration endpoint. It should not connect to the Render database with credentials or write directly to Supabase tables. Document provider retries and failure handling before enabling it.
 
 Long-running document parsing, large evidence exports, malware scanning and scheduled reconciliation should become background jobs when operational evidence justifies a queue. They are not Edge Function workloads. The current API uses bounded synchronous work and optional backend AI; ordinary records do not depend on NVIDIA availability.
+
+The first durable background workflow is documented in [`AGENTIC_WORKFLOWS.md`](AGENTIC_WORKFLOWS.md). Health-event and follow-up writes append a farm-scoped domain event and scheduled workflow steps in the same transaction. A restricted-runtime worker processes due reminders and writes recipient-scoped in-app notifications through a narrow database function. It cannot write clinical outcomes. This worker is the starting point for future agent workflows; it is not a public MCP endpoint and does not make external model calls.
 
 ## Deploy and migrate safely
 

@@ -41,3 +41,25 @@ services:
       name: terravanta-uploads
       mountPath: /var/data
       sizeGB: 1
+
+  - type: worker
+    name: terravanta-workflow-worker
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    branch: main
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    dockerCommand: python -m app.worker
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SERVICE_MODE
+        value: worker
+      - key: DATABASE_URL
+        sync: false
+      - key: WORKFLOW_POLL_SECONDS
+        value: "30"
+      - key: ENABLE_SYNTHETIC_DATA
+        value: "false"

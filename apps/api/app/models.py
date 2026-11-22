@@ -244,6 +244,92 @@ class AnimalHealthFollowUp(Base):
     )
 
 
+class FarmDomainEvent(Base):
+    """Append-only record of a farm fact that can start a bounded workflow."""
+    __tablename__ = "farm_domain_events"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    aggregate_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    aggregate_id: Mapped[object] = mapped_column(Uuid, nullable=False)
+    actor_user_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    __table_args__ = (Index("ix_farm_domain_events_farm_created", "farm_id", "created_at"),)
+
+
+class WorkflowRun(Base):
+    """Durable scheduled step owned by a versioned deterministic workflow."""
+    __tablename__ = "workflow_runs"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farm_domain_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    workflow_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    step: Mapped[str] = mapped_column(String(40), nullable=False)
+    aggregate_id: Mapped[object] = mapped_column(Uuid, nullable=False)
+    due_on: Mapped[object] = mapped_column(Date, nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(220), unique=True, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        CheckConstraint("step IN ('upcoming', 'due', 'overdue')", name="ck_workflow_run_step"),
+        CheckConstraint("status IN ('pending', 'completed', 'cancelled', 'failed')", name="ck_workflow_run_status"),
+        CheckConstraint("attempts >= 0", name="ck_workflow_run_attempts"),
+        Index("ix_workflow_runs_due", "status", "scheduled_at"),
+    )
+
+
+class Notification(Base):
+    """In-app notification inbox item; recipient visibility is enforced by RLS."""
+    __tablename__ = "notifications"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farm_domain_events.id", ondelete="CASCADE"), nullable=False)
+    recipient_user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    notification_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), default="info", nullable=False)
+    action_section: Mapped[str] = mapped_column(String(40), default="overview", nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(260), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        CheckConstraint("severity IN ('info', 'medium', 'high')", name="ck_notification_severity"),
+        Index("ix_notifications_recipient_created", "recipient_user_id", "created_at"),
+    )
+
+
+class VeterinaryContactRequest(Base):
+    """Farmer request for a veterinarian to contact them; this is not an emergency dispatch."""
+    __tablename__ = "veterinary_contact_requests"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    animal_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("animals.id", ondelete="SET NULL"), nullable=True, index=True)
+    requester_user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    veterinarian_user_id: Mapped[object | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    urgency: Mapped[str] = mapped_column(String(20), default="routine", nullable=False)
+    preferred_contact_method: Mapped[str] = mapped_column(String(20), default="phone_call", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc, nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (
+        CheckConstraint("urgency IN ('routine', 'urgent', 'emergency')", name="ck_vet_contact_urgency"),
+        CheckConstraint("preferred_contact_method IN ('phone_call', 'whatsapp', 'in_app')", name="ck_vet_contact_method"),
+        CheckConstraint("status IN ('pending', 'accepted', 'declined', 'contacted', 'cancelled')", name="ck_vet_contact_status"),
+        Index("ix_vet_contact_farm_status_created", "farm_id", "status", "created_at"),
+        Index("ix_vet_contact_vet_status_created", "veterinarian_user_id", "status", "created_at"),
+    )
+
+
 class ClinicalObservation(Base):
     __tablename__ = "clinical_observations"
     id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)

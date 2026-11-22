@@ -87,6 +87,18 @@ def safe_case_response(text: str) -> bool:
     return not any(re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL) for pattern in patterns)
 
 
+def safe_farm_response(text: str) -> bool:
+    """Reject high-risk clinical, feed-rate, input-rate, and guaranteed-return instructions."""
+    if not safe_case_response(text):
+        return False
+    patterns = [
+        r"\b(?:feed|mix|apply|spray|dose|administer)\b.{0,100}\b\d+(?:\.\d+)?\s*(?:mg|ml|g|kg|lit(?:er|re)s?|l)\s*(?:/|per)\s*(?:cow|animal|head|day|acre|ha|hectare)\b",
+        r"\b\d+(?:\.\d+)?\s*(?:mg|ml|g|kg|lit(?:er|re)s?|l)\s*(?:/|per)\s*(?:cow|animal|head|day|acre|ha|hectare)\b",
+        r"\b(?:guaranteed?|guarantees?|will|certainly)\b.{0,80}\b(?:increase|improve|boost|raise)\b.{0,60}\b(?:yield|milk|production|profit|income|revenue|return)\b",
+    ]
+    return not any(re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL) for pattern in patterns)
+
+
 def parse_structured(text: str) -> tuple[dict, str]:
     cleaned = text.strip()
     if cleaned.startswith("```"):

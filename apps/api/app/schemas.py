@@ -227,6 +227,22 @@ class AssistantRequest(BaseModel):
     allow_external_processing: bool = False
 
 
+class VeterinaryContactRequestCreate(BaseModel):
+    animal_id: UUID | None = None
+    message: str = Field(default="", max_length=1200)
+    urgency: Literal["routine", "urgent", "emergency"] = "routine"
+    preferred_contact_method: Literal["phone_call", "whatsapp", "in_app"] = "phone_call"
+
+
+class VeterinaryContactRequestUpdate(BaseModel):
+    status: Literal["accepted", "declined", "contacted", "cancelled"]
+
+
+class FarmAssistantRequest(BaseModel):
+    question: str = Field(min_length=4, max_length=1200)
+    allow_external_processing: bool = False
+
+
 class TerrasRouteRequest(BaseModel):
     message: str = Field(min_length=2, max_length=600)
 

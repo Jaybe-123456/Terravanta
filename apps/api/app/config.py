@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -5,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "Terravanta API"
     app_env: str = "development"
+    service_mode: Literal["api", "worker"] = "api"
     database_url: str = "sqlite:///./terrava.db"
     migrations_database_url: str = ""
     cors_origins: str = "http://localhost:3000"
@@ -31,6 +34,7 @@ class Settings(BaseSettings):
     evidence_s3_secret_key: str = ""
     evidence_max_file_bytes: int = 15_000_000
     ai_timeout_seconds: int = 35
+    workflow_poll_seconds: int = 30
     model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
 
     @field_validator("database_url", "migrations_database_url", mode="before")
@@ -63,14 +67,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def require_production_auth_configuration(self):
         if self.app_env.lower() == "production":
-            has_supabase = bool(self.supabase_url and self.supabase_anon_key)
-            if not has_supabase:
-                raise ValueError("Production requires Supabase Auth configuration")
             if not self.database_url.startswith("postgresql+"):
                 raise ValueError("Production requires DATABASE_URL to use the restricted PostgreSQL runtime role")
-            if not self.migrations_database_url:
+            if self.service_mode == "api" and not (self.supabase_url and self.supabase_anon_key):
+                raise ValueError("Production API requires Supabase Auth configuration")
+            if self.service_mode == "api" and not self.migrations_database_url:
                 raise ValueError("Production requires MIGRATIONS_DATABASE_URL for schema and operator tasks")
-            if "*" in self.allowed_origins:
+            if self.service_mode == "api" and "*" in self.allowed_origins:
                 raise ValueError("Production CORS_ORIGINS must list explicit origins")
             if self.enable_synthetic_data:
                 raise ValueError("Synthetic data must be disabled in production")

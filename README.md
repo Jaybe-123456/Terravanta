@@ -10,7 +10,7 @@ The product has three role-specific workspaces:
 - **Cooperative receivables:** create seller-asserted processor claims, attach source records, track reviewed-date aging, record receipts and export an evidence pack.
 - **Processor administrator:** review only claims sent to the processor organization and record an accept, partial, dispute, reject or information-request response.
 
-See [core platform architecture, auth, RLS and API boundaries](docs/CORE_PLATFORM_ARCHITECTURE.md), [system architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [veterinary follow-up and outcome evaluation](docs/VETERINARY_FOLLOWUP_EVALUATION.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
+See [core platform architecture, auth, RLS and API boundaries](docs/CORE_PLATFORM_ARCHITECTURE.md), [farm events, workflows and notifications](docs/AGENTIC_WORKFLOWS.md), [farm decision support and messaging channels](docs/CHANNELS_AND_FARM_INTELLIGENCE.md), [system architecture](docs/ARCHITECTURE.md), [implemented scope and limitations](docs/ROADMAP.md), [synthetic demo data](docs/SYNTHETIC_DEMO_DATA.md), [veterinary follow-up and outcome evaluation](docs/VETERINARY_FOLLOWUP_EVALUATION.md), [receivables assurance architecture and validation](docs/RECEIVABLES_ASSURANCE.md), [member settlement close API and contracts](docs/SETTLEMENT_CLOSE.md), the [market wedge and PMF plan](docs/GO_TO_MARKET.md), and the [cooperative discovery and pilot kit](docs/COOPERATIVE_PILOT_KIT.md).
 
 The current smallholder commercial viability review, Kenya legal/data gates, multi-objective product state/action harness and Kubernetes decision are in [Commercial viability and harness](docs/COMMERCIAL_VIABILITY_AND_HARNESS.md). GitHub Actions validates its machine-readable state at `config/terravanta-commercial-harness.json`.
 
@@ -34,6 +34,8 @@ Start the services from the repository root:
 docker compose config --quiet
 docker compose up --build -d
 ```
+
+Compose also starts `workflow-worker` for scheduled veterinary follow-up notifications. See [agentic workflows](docs/AGENTIC_WORKFLOWS.md) for the worker boundary and Render variables.
 
 The example ports are 3000 and 8000. If those ports are occupied, set `WEB_HOST_PORT`, `API_HOST_PORT`, `NEXT_PUBLIC_API_URL`, and `CORS_ORIGINS` consistently in `.env`. This checkout currently uses 3001 and 8001. After setting Supabase values, rebuild with `docker compose up --build -d`. Open the app at `http://localhost:3001`, API health at `http://localhost:8001/health`, and OpenAPI at `http://localhost:8001/docs`.
 

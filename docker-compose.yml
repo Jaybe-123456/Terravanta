@@ -56,6 +56,19 @@ services:
       timeout: 3s
       retries: 12
 
+  workflow-worker:
+    build: ./apps/api
+    command: ["python", "-m", "app.worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      SERVICE_MODE: worker
+      DATABASE_URL: postgresql+psycopg://terravanta:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/terravanta
+      WORKFLOW_POLL_SECONDS: ${WORKFLOW_POLL_SECONDS:-30}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   web:
     build:
       context: ./apps/web

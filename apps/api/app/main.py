@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from pypdf import PdfReader
 
-from .ai import nvidia, parse_structured, safe_case_response
+from .ai import nvidia, parse_structured, safe_case_response, safe_farm_response
 from .config import settings
 from .db import AdminSessionLocal, Base, admin_engine, engine, get_admin_db, get_db
 from .models import (
@@ -30,19 +30,22 @@ from .models import (
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
     FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot, SupabaseIdentityLink,
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, SettlementClose, SettlementCloseItem, User, UserRole,
+    VeterinaryContactRequest, FarmDomainEvent, Notification,
 )
 from .schemas import (
     AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     HealthFollowUpCreate, ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
     SettlementApproveCreate, SettlementReviewCreate,
-    TerrasRouteRequest,
+    TerrasRouteRequest, VeterinaryContactRequestCreate, VeterinaryContactRequestUpdate, FarmAssistantRequest,
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
 from .settlement import parse_settlement_sources
 from .security import bearer, current_identity, current_user, get_scoped_db, issue_demo_token, require_role, user_role, user_roles, verified_supabase_user
 from .seed import FARMER_ID, FARM_ID, seed
 from .receivables import router as receivables_router
+from .notifications import router as notifications_router
+from .workflows import append_domain_event, schedule_health_follow_up
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("terravanta")
@@ -55,6 +58,8 @@ def farm_today() -> date:
 
 
 def initialize_database():
+    if settings.service_mode != "api":
+        raise RuntimeError("FastAPI web service requires SERVICE_MODE=api")
     if settings.app_env == "production":
         # Production schema changes are applied by Alembic before the API starts.
         with engine.connect() as connection:
@@ -81,6 +86,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Terravanta API", version="1.0.0", description="Veterinary-first farm intelligence API. Optional demonstration records are synthetic.", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(receivables_router)
+app.include_router(notifications_router)
 
 
 def dump(row, exclude: set[str] | None = None) -> dict:
@@ -448,6 +454,166 @@ def farm_health_events(farm_id: UUID, user: User = Depends(current_user), db: Se
     return result
 
 
+def serialize_vet_contact_request(db: Session, row: VeterinaryContactRequest) -> dict:
+    animal = db.get(Animal, row.animal_id) if row.animal_id else None
+    requester = db.get(User, row.requester_user_id)
+    veterinarian = db.get(User, row.veterinarian_user_id) if row.veterinarian_user_id else None
+    return {
+        **dump(row),
+        "animal_tag": animal.tag if animal else None,
+        "animal_name": animal.name if animal else None,
+        "requester_name": requester.display_name if requester else "Farm member",
+        "veterinarian_name": veterinarian.display_name if veterinarian else None,
+    }
+
+
+@app.get("/api/v1/farms/{farm_id}/veterinary-contact-requests")
+def list_vet_contact_requests(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    farm = farm_access(db, user, farm_id)
+    role = user_role(db, user)
+    require_role(db, user, "farmer", "veterinarian", "platform_admin")
+    query = db.query(VeterinaryContactRequest).filter(VeterinaryContactRequest.farm_id == farm.id)
+    if role == "farmer":
+        query = query.filter(VeterinaryContactRequest.requester_user_id == user.id)
+    elif role == "veterinarian":
+        query = query.filter(or_(
+            VeterinaryContactRequest.veterinarian_user_id == user.id,
+            VeterinaryContactRequest.status == "pending",
+        ))
+    rows = query.order_by(VeterinaryContactRequest.created_at.desc()).limit(100).all()
+    return [serialize_vet_contact_request(db, row) for row in rows]
+
+
+@app.post("/api/v1/farms/{farm_id}/veterinary-contact-requests", status_code=201)
+def create_vet_contact_request(
+    farm_id: UUID,
+    body: VeterinaryContactRequestCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_scoped_db),
+):
+    farm = farm_access(db, user, farm_id)
+    require_role(db, user, "farmer")
+    if body.animal_id:
+        animal = db.query(Animal).filter_by(id=body.animal_id, farm_id=farm.id).first()
+        if not animal:
+            raise HTTPException(422, "Choose an animal registered to this farm")
+
+    veterinarians = db.query(FarmMember.user_id).filter(
+        FarmMember.farm_id == farm.id,
+        FarmMember.role == "veterinarian",
+    ).all()
+    vet_ids = [item.user_id for item in veterinarians]
+    if not vet_ids:
+        raise HTTPException(409, "No veterinarian is assigned to this farm yet. Ask your cooperative to connect a veterinarian before sending a request.")
+
+    row = VeterinaryContactRequest(
+        farm_id=farm.id,
+        animal_id=body.animal_id,
+        requester_user_id=user.id,
+        message=body.message.strip(),
+        urgency=body.urgency,
+        preferred_contact_method=body.preferred_contact_method,
+        status="pending",
+    )
+    db.add(row)
+    db.flush()
+    source_event = append_domain_event(
+        db,
+        farm_id=farm.id,
+        actor=user,
+        event_type="veterinary.contact_requested",
+        aggregate_type="veterinary_contact_request",
+        aggregate_id=row.id,
+        idempotency_key=f"vet-contact:{row.id}:requested",
+        payload={"urgency": row.urgency, "preferred_contact_method": row.preferred_contact_method, "animal_id": str(row.animal_id) if row.animal_id else None},
+    )
+    for vet_id in vet_ids:
+        db.add(Notification(
+            farm_id=farm.id,
+            event_id=source_event.id,
+            recipient_user_id=vet_id,
+            notification_type="veterinary_contact_requested",
+            title="Farmer requested veterinary contact",
+            body=f"A {row.urgency} contact request is waiting for {farm.name}.",
+            severity="high" if row.urgency in {"urgent", "emergency"} else "medium",
+            action_section="veterinary",
+            idempotency_key=f"vet-contact:{row.id}:requested:{vet_id}",
+        ))
+    audit(db, user, "veterinary.contact_requested", "veterinary_contact_request", str(row.id), farm.id, {"urgency": row.urgency})
+    db.commit()
+    db.refresh(row)
+    result = serialize_vet_contact_request(db, row)
+    result["notified_veterinarians"] = len(vet_ids)
+    result["message_delivery"] = "in_app"
+    return result
+
+
+@app.patch("/api/v1/veterinary-contact-requests/{request_id}")
+def update_vet_contact_request(
+    request_id: UUID,
+    body: VeterinaryContactRequestUpdate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_scoped_db),
+):
+    row = db.query(VeterinaryContactRequest).filter_by(id=request_id).with_for_update().first()
+    if not row:
+        raise HTTPException(404, "Veterinary contact request not found")
+    membership = db.query(FarmMember).filter_by(farm_id=row.farm_id, user_id=user.id).first()
+    if not membership:
+        raise HTTPException(404, "Veterinary contact request not found")
+
+    old_status = row.status
+    if body.status == "cancelled":
+        require_role(db, user, "farmer")
+        if row.requester_user_id != user.id or old_status != "pending":
+            raise HTTPException(409, "Only the requesting farmer can cancel a pending request")
+    else:
+        require_role(db, user, "veterinarian")
+        if membership.role != "veterinarian":
+            raise HTTPException(403, "Only a veterinarian assigned to this farm can respond")
+        if body.status in {"accepted", "declined"} and old_status != "pending":
+            raise HTTPException(409, "Only a pending request can be accepted or declined")
+        if body.status == "contacted" and (old_status != "accepted" or row.veterinarian_user_id != user.id):
+            raise HTTPException(409, "Only the veterinarian who accepted this request can record contact")
+        if old_status == "pending":
+            row.veterinarian_user_id = user.id
+        elif row.veterinarian_user_id != user.id:
+            raise HTTPException(403, "This request has already been accepted by another veterinarian")
+
+    row.status = body.status
+    row.updated_at = datetime.now(timezone.utc)
+    row.responded_at = row.updated_at if body.status in {"accepted", "declined", "contacted"} else None
+    source_event = append_domain_event(
+        db,
+        farm_id=row.farm_id,
+        actor=user,
+        event_type=f"veterinary.contact_{body.status}",
+        aggregate_type="veterinary_contact_request",
+        aggregate_id=row.id,
+        idempotency_key=f"vet-contact:{row.id}:{body.status}:{row.updated_at.isoformat()}",
+        payload={"previous_status": old_status, "status": row.status, "veterinarian_user_id": str(row.veterinarian_user_id) if row.veterinarian_user_id else None},
+    )
+    recipients = [row.requester_user_id] if user.id != row.requester_user_id else [
+        item.user_id for item in db.query(FarmMember).filter_by(farm_id=row.farm_id, role="veterinarian").all()
+    ]
+    for recipient_id in recipients:
+        db.add(Notification(
+            farm_id=row.farm_id,
+            event_id=source_event.id,
+            recipient_user_id=recipient_id,
+            notification_type=f"veterinary_contact_{body.status}",
+            title=f"Veterinary contact request {body.status}",
+            body=f"The contact request for {row.message[:100] or 'your farm'} is now {body.status.replace('_', ' ')}.",
+            severity="info",
+            action_section="veterinary",
+            idempotency_key=f"vet-contact:{row.id}:{body.status}:{recipient_id}:{source_event.id}",
+        ))
+    audit(db, user, f"veterinary.contact_{body.status}", "veterinary_contact_request", str(row.id), row.farm_id)
+    db.commit()
+    db.refresh(row)
+    return serialize_vet_contact_request(db, row)
+
+
 @app.get("/api/v1/health-events/{event_id}/follow-ups")
 def list_health_follow_ups(event_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     event = db.get(AnimalHealthEvent, event_id)
@@ -520,6 +686,29 @@ def create_health_follow_up(event_id: UUID, body: HealthFollowUpCreate, user: Us
         "clinical_outcome": row.clinical_outcome,
         "case_disposition": row.case_disposition,
     })
+    source_event = append_domain_event(
+        db,
+        farm_id=farm.id,
+        actor=user,
+        event_type="animal_health.follow_up_recorded",
+        aggregate_type="animal_health_event",
+        aggregate_id=event.id,
+        idempotency_key=f"animal-health-follow-up:{row.id}:recorded",
+        payload={
+            "follow_up_id": str(row.id),
+            "follow_up_status": row.follow_up_status,
+            "case_disposition": row.case_disposition,
+            "next_follow_up_on": event.follow_up_on.isoformat() if event.follow_up_on else None,
+            "case_status": event.status,
+        },
+    )
+    schedule_health_follow_up(
+        db,
+        farm_id=farm.id,
+        health_event=event,
+        source_event=source_event,
+        due_on=event.follow_up_on if event.status == "open" else None,
+    )
     db.commit()
     db.refresh(row)
     result = dump(row)
@@ -541,6 +730,23 @@ def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = D
     db.add(row)
     db.flush()
     audit(db, user, "health_event.created", "animal_health_event", str(row.id), farm.id, {"verified": verified})
+    source_event = append_domain_event(
+        db,
+        farm_id=farm.id,
+        actor=user,
+        event_type="animal_health_event.created",
+        aggregate_type="animal_health_event",
+        aggregate_id=row.id,
+        idempotency_key=f"animal-health-event:{row.id}:created",
+        payload={"event_type": row.event_type, "follow_up_on": row.follow_up_on.isoformat() if row.follow_up_on else None},
+    )
+    schedule_health_follow_up(
+        db,
+        farm_id=farm.id,
+        health_event=row,
+        source_event=source_event,
+        due_on=row.follow_up_on,
+    )
     db.commit()
     return dump(row)
 
@@ -1241,6 +1447,223 @@ def get_alerts(user: User = Depends(current_user), db: Session = Depends(get_sco
     return build_alerts(db, farm)
 
 
+def farm_record_insights(db: Session, farm: Farm) -> dict:
+    """Transparent, record-derived farm signals; never infer nutrient adequacy or treatment effect."""
+    today = farm_today()
+    window_start = today - timedelta(days=13)
+    prior_start = window_start - timedelta(days=14)
+    production = db.query(ProductionRecord).filter(
+        ProductionRecord.farm_id == farm.id,
+        ProductionRecord.recorded_on >= prior_start,
+        ProductionRecord.recorded_on <= today,
+    ).order_by(ProductionRecord.recorded_on.desc()).all()
+    series: dict[tuple[str, str], dict[str, float]] = {}
+    for item in production:
+        key = (item.product_type.strip().lower(), item.unit.strip().lower())
+        day_key = item.recorded_on.isoformat()
+        series.setdefault(key, {})[day_key] = series.setdefault(key, {}).get(day_key, 0.0) + float(item.quantity)
+    production_comparison = []
+    for (product_type, unit), records in sorted(series.items()):
+        current = [value for day, value in records.items() if window_start.isoformat() <= day <= today.isoformat()]
+        prior = [value for day, value in records.items() if prior_start.isoformat() <= day < window_start.isoformat()]
+        production_comparison.append({
+            "product_type": product_type,
+            "unit": unit,
+            "current_window": {"from": window_start.isoformat(), "through": today.isoformat(), "days_recorded": len(current), "total": round(sum(current), 2)},
+            "prior_window": {"from": prior_start.isoformat(), "through": (window_start - timedelta(days=1)).isoformat(), "days_recorded": len(prior), "total": round(sum(prior), 2)},
+            "change_total": round(sum(current) - sum(prior), 2) if prior else None,
+            "comparison_note": "Totals compare records in equal 14-day windows; missing days are not treated as zero production." if prior else "A prior 14-day baseline is not available.",
+        })
+
+    plots = db.query(Plot).filter_by(farm_id=farm.id).all()
+    feed_batches = db.query(FeedBatch).filter_by(farm_id=farm.id).all()
+    allocations = db.query(FeedAllocation).filter(
+        FeedAllocation.farm_id == farm.id,
+        FeedAllocation.allocated_on >= today - timedelta(days=29),
+        FeedAllocation.allocated_on <= today,
+    ).all()
+    animals = db.query(Animal).filter_by(farm_id=farm.id).all()
+    animals_with_feed_records = db.query(func.count(func.distinct(FeedAllocation.animal_id))).filter(
+        FeedAllocation.farm_id == farm.id,
+        FeedAllocation.allocated_on >= today - timedelta(days=29),
+        FeedAllocation.allocated_on <= today,
+    ).scalar() or 0
+    open_cases = db.query(AnimalHealthEvent).filter_by(farm_id=farm.id, status="open").count()
+    followups = db.query(AnimalHealthFollowUp).filter(
+        AnimalHealthFollowUp.farm_id == farm.id,
+        AnimalHealthFollowUp.occurred_on >= today - timedelta(days=89),
+        AnimalHealthFollowUp.occurred_on <= today,
+    ).all()
+    deliveries = db.query(Delivery).filter_by(farm_id=farm.id).all()
+    traceable_delivery_count = db.query(Delivery.id).join(
+        ProductLot, ProductLot.id == Delivery.product_lot_id,
+    ).join(
+        ProductionRecord, ProductionRecord.id == ProductLot.production_record_id,
+    ).filter(Delivery.farm_id == farm.id, ProductLot.farm_id == farm.id).count()
+    active_shares = db.query(Consent).filter(
+        Consent.farm_id == farm.id,
+        Consent.status == "active",
+        or_(Consent.expires_at.is_(None), Consent.expires_at > datetime.now(timezone.utc)),
+    ).count()
+    plot_map = {plot.id: plot for plot in plots}
+    recent_plot_records = db.query(ProductionRecord).filter(
+        ProductionRecord.farm_id == farm.id,
+        ProductionRecord.plot_id.in_(list(plot_map)) if plot_map else ProductionRecord.plot_id.is_(None),
+        ProductionRecord.recorded_on >= today - timedelta(days=89),
+        ProductionRecord.recorded_on <= today,
+    ).all() if plot_map else []
+    plot_totals: dict[tuple[object, str, str], float] = {}
+    for item in recent_plot_records:
+        key = (item.plot_id, item.product_type, item.unit)
+        plot_totals[key] = plot_totals.get(key, 0.0) + float(item.quantity)
+
+    data_gaps = []
+    actions = []
+    if not any(item["current_window"]["days_recorded"] > 0 for item in production_comparison):
+        data_gaps.append("No production entries appear in the current 14-day window.")
+    if not plots:
+        data_gaps.append("No crop plots are registered, so crop output cannot be compared by plot.")
+    elif any(item.product_type.strip().lower() != "milk" for item in production) and not any(item.plot_id for item in production if item.product_type.strip().lower() != "milk"):
+        data_gaps.append("Recent crop production is not linked to plots.")
+    if not feed_batches:
+        data_gaps.append("No feed batches are recorded; feed stock and use cannot be summarized.")
+    if followups:
+        completed = sum(item.follow_up_status == "completed" for item in followups)
+        actions.append({"priority": "review", "title": "Review veterinary follow-up completion", "detail": f"{completed} of {len(followups)} recorded follow-ups in the last 90 days are marked completed. This is a workflow count, not a health outcome measure.", "destination": "veterinary"})
+    if any(batch.aflatoxin_status == "pending_test" for batch in feed_batches):
+        actions.append({"priority": "review", "title": "Close pending feed test records", "detail": "At least one batch is marked pending test. Record the laboratory result when received; no feed-safety status is inferred.", "destination": "feed"})
+    if not deliveries:
+        actions.append({"priority": "next_step", "title": "Connect production to traceability", "detail": "No deliveries are recorded. Link a delivery to its source production record when one occurs.", "destination": "traceability"})
+
+    return {
+        "period": {"through": today.isoformat(), "timezone": "Africa/Nairobi"},
+        "record_counts": {
+            "animals": len(animals),
+            "open_veterinary_cases": open_cases,
+            "plots": len(plots),
+            "fodder_plots": sum(plot.is_feed_crop for plot in plots),
+            "feed_batches": len(feed_batches),
+            "feed_stock_kg_recorded": round(sum(max(0, batch.quantity_kg) for batch in feed_batches), 2),
+            "feed_allocated_kg_last_30_days": round(sum(item.allocated_kg for item in allocations), 2),
+            "animals_with_feed_records_last_30_days": animals_with_feed_records,
+            "follow_ups_last_90_days": len(followups),
+            "follow_ups_completed_last_90_days": sum(item.follow_up_status == "completed" for item in followups),
+            "deliveries": len(deliveries),
+            "source_linked_deliveries": traceable_delivery_count,
+            "active_sharing_consents": active_shares,
+        },
+        "production_comparison": production_comparison,
+        "plot_production_last_90_days": [
+            {"plot_name": plot_map[plot_id].name, "crop_type": plot_map[plot_id].crop_type, "product_type": product_type, "quantity": round(quantity, 2), "unit": unit}
+            for (plot_id, product_type, unit), quantity in sorted(plot_totals.items(), key=lambda entry: (plot_map[entry[0][0]].name.lower(), entry[0][1], entry[0][2]))
+            if plot_id in plot_map
+        ],
+        "crop_mix": [{"crop_type": plot.crop_type, "area_acres": plot.area_acres, "is_feed_crop": plot.is_feed_crop} for plot in plots],
+        "feed_stock": [{"batch_name": batch.name, "ingredients": batch.ingredients, "quantity_kg_recorded": batch.quantity_kg, "test_status": batch.aflatoxin_status, "batch_date": batch.batch_date.isoformat()} for batch in feed_batches],
+        "data_gaps": data_gaps,
+        "review_actions": actions,
+        "interpretation_limits": [
+            "These are descriptions of records, not verified farm performance or causal effects.",
+            "Feed quantity is not a ration or nutritional adequacy assessment.",
+            "No clinical diagnosis, treatment, food-safety status, or financial return is inferred.",
+        ],
+    }
+
+
+@app.get("/api/v1/farms/{farm_id}/insights")
+def get_farm_insights(farm_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    farm = farm_access(db, user, farm_id)
+    require_role(db, user, "farmer", "veterinarian", "platform_admin")
+    return farm_record_insights(db, farm)
+
+
+def external_farm_summary(facts: dict) -> dict:
+    """Allowlisted and aggregated fields for a user-approved external model request."""
+    plot_totals: dict[tuple[str, str, str], float] = {}
+    for item in facts["plot_production_last_90_days"]:
+        key = (item["crop_type"], item["product_type"], item["unit"])
+        plot_totals[key] = plot_totals.get(key, 0.0) + float(item["quantity"])
+    crop_mix: dict[str, float] = {}
+    for item in facts["crop_mix"]:
+        crop_mix[item["crop_type"]] = crop_mix.get(item["crop_type"], 0.0) + float(item["area_acres"])
+    return {
+        "record_counts": facts["record_counts"],
+        "production_comparison": facts["production_comparison"],
+        "crop_area_by_type_acres": [{"crop_type": crop, "area_acres": round(area, 2)} for crop, area in sorted(crop_mix.items())],
+        "plot_production_grouped_by_crop_last_90_days": [
+            {"crop_type": crop, "product_type": product, "quantity": round(quantity, 2), "unit": unit}
+            for (crop, product, unit), quantity in sorted(plot_totals.items())
+        ],
+        "feed_stock": [
+            {"ingredients": item["ingredients"], "quantity_kg_recorded": item["quantity_kg_recorded"], "test_status": item["test_status"]}
+            for item in facts["feed_stock"]
+        ],
+        "data_gaps": facts["data_gaps"],
+        "review_actions": facts["review_actions"],
+    }
+
+
+@app.post("/api/v1/farms/{farm_id}/ai-assistant")
+async def farm_assistant(farm_id: UUID, body: FarmAssistantRequest, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    farm = farm_access(db, user, farm_id)
+    require_role(db, user, "farmer", "veterinarian", "platform_admin")
+    enforce_ai_rate_limit(db, user)
+    facts = farm_record_insights(db, farm)
+    terms = set(re.findall(r"[a-z]{4,}", body.question.lower()))
+    approved_sources = db.query(KnowledgeSource).filter_by(approved=True).all()
+    retrieved = [source for source in approved_sources if terms.intersection(set(re.findall(r"[a-z]{4,}", (source.title + " " + source.content).lower())))][:4]
+    sources = [{"id": str(source.id), "title": source.title, "url": source.source_url, "publisher": source.publisher} for source in retrieved]
+    request = AIRequest(user_id=user.id, farm_id=farm.id, request_type="farm_assistant", model_name=settings.nvidia_chat_model, prompt_version="farm_v1")
+    db.add(request)
+    db.flush()
+    response = {
+        "request_id": str(request.id), "status": "unavailable", "answer": "", "model_generated": False,
+        "facts": facts, "sources": sources,
+        "safety_note": "Decision-support draft only. A qualified veterinarian or agricultural adviser must review advice before clinical, feed-safety, pesticide, fertilizer, or other high-impact action.",
+        "privacy_note": "The model receives an allowlisted farm-record summary only after you enable external processing. Account names, emails, farm coordinates, animal names and tags are excluded from that summary; crop/feed labels and aggregate quantities may be sent. Your question is sent as written, so omit personal and contact details.",
+    }
+    if not body.allow_external_processing:
+        response.update({"status": "consent_required", "answer": "No external model request was made. Enable external processing to send this aggregate farm snapshot and question to NVIDIA."})
+        request.outcome = "consent_required"
+    elif not settings.nvidia_api_key:
+        response.update({"status": "provider_unconfigured", "answer": "NVIDIA is not configured. The record-based indicators remain available; no AI answer was generated."})
+        request.outcome = "provider_unconfigured"
+    else:
+        # Exclude direct personal identifiers and fine-grained farm location from external model context.
+        context = {
+            "record_snapshot": external_farm_summary(facts),
+            "approved_references": [{"id": str(source.id), "title": source.title, "publisher": source.publisher, "content": source.content[:1800]} for source in retrieved],
+        }
+        prompt = (
+            "You are Terravanta's farm-record decision-support assistant. Use only the supplied record snapshot and approved references. "
+            "Separate observed record facts from suggestions. Cite source IDs for domain-specific advice; do not invent sources. "
+            "Do not diagnose, prescribe, calculate animal treatment doses, certify feed or food safety, give exact ration formulations, "
+            "or prescribe pesticide/fertilizer rates. If no applicable approved source is supplied, limit the answer to describing records, "
+            "uncertainty, and the additional information a qualified professional should review. Never claim causal productivity gains or ROI. "
+            "Return a concise review draft, not an instruction that executes a farm action.\n\nCONTEXT: "
+            + json.dumps(context, ensure_ascii=False) + "\nQUESTION: " + body.question
+        )
+        started = time.perf_counter()
+        try:
+            answer, latency = await nvidia.chat([{"role": "user", "content": prompt}])
+            if not safe_farm_response(answer):
+                answer = "The draft was withheld because it may contain a clinical or treatment instruction. Review the recorded indicators with a qualified veterinarian or agricultural adviser."
+                request.outcome = "safety_filtered"
+            else:
+                request.outcome = "success"
+            request.latency_ms = latency
+            response.update({"status": request.outcome, "answer": answer, "model_generated": request.outcome == "success", "model": settings.nvidia_chat_model})
+        except Exception as exc:
+            log.warning("NVIDIA farm assistant failed (%s)", type(exc).__name__)
+            request.outcome = "provider_error"
+            request.latency_ms = round((time.perf_counter() - started) * 1000)
+            response.update({"status": "unavailable", "answer": "The NVIDIA service is unavailable or rejected this request. No AI answer was generated; the record indicators remain available."})
+    db.add(AIResponse(request_id=request.id, content=response["answer"], structured_output={"status": response["status"], "farm_facts": facts}, sources=sources))
+    audit(db, user, "ai.farm_assistant", "ai_request", str(request.id), farm.id, {"status": response["status"], "model": settings.nvidia_chat_model})
+    db.commit()
+    return response
+
+
 @app.post("/api/v1/terras/route")
 def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     """Role-scoped, deterministic routing. This endpoint never writes farm data or calls a model."""
@@ -1299,6 +1722,15 @@ def terras_route(body: TerrasRouteRequest, user: User = Depends(current_user), d
             cooperative_organization_ids(db, user)
             return routed("reports", "close_history", "Open Close history to review previous payout periods, exception counts, and approval notes.", "GET /api/v1/cooperative/settlement-closes")
         return routed("overview", "cooperative_navigation", "I can take you to payout close, close history, or consented member delivery records. Try asking about a payout close or shared deliveries.")
+
+    if role == "farmer" and any(term in message for term in ("call a vet", "contact a vet", "request a vet", "vet visit", "talk to a vet")):
+        farm = primary_farm(db, user)
+        return routed(
+            "veterinary", "request_veterinarian_contact",
+            "Open Veterinary and send a contact request to the veterinarians assigned to this farm. Terravanta records and notifies the request; it does not place a phone call or send a WhatsApp message yet. For an emergency, contact local veterinary help directly.",
+            f"POST /api/v1/farms/{farm.id}/veterinary-contact-requests",
+            required_inputs=["Optional animal", "Urgency", "What you observed", "Preferred contact method"],
+        )
 
     if role in {"farmer", "platform_admin"} and any(term in message for term in ("milk", "production", "harvest")):
         farm = primary_farm(db, user)

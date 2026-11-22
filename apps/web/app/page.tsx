@@ -6,6 +6,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } f
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
 import { ReceivablesDesk } from "@/components/receivables-desk";
+import { NotificationCenter } from "@/components/notification-center";
 import { API_URL, AUTH_MODE, SUPABASE_CONFIGURED, api, clearSession, consumeSupabaseRedirect, flushOfflineQueue, loginDemo, loginSupabase, logoutSupabase, persistSession, requestSupabasePasswordReset, restoreSession, signUpSupabase, updateSupabasePassword, uploadDocument, writeApi } from "@/lib/api";
 import { buildReconciliationCsv } from "@/lib/reconciliation-export";
 
@@ -544,14 +545,14 @@ export default function Home() {
     <main className="main-shell">
       <header className="topbar">
         <div className="topbar-left"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumbs"><span>Workspace</span><span>/</span><strong>{isCoop ? "Cooperative operations" : isProcessor ? "Processor accounts payable" : role === "veterinarian" ? "Veterinary casework" : farm?.name || "Overview"}</strong></div></div>
-        <div className="topbar-actions"><span className={`sync-state ${online ? "" : "offline"}`}><i />{online ? <Wifi size={14} /> : <CloudOff size={14} />}{online ? "Online" : "Offline"}{queued ? <b>{queued}</b> : null}</span><button className="icon-button refresh-button" title="Refresh records" onClick={() => void reload()}><RefreshCw size={17} /></button>{demoMode ? <label className="role-picker" aria-label="Switch synthetic demo role"><select value={role} onChange={(event) => void switchRole(event.target.value)}><option value="farmer">Farmer demo</option><option value="veterinarian">Veterinarian demo</option><option value="cooperative_admin">Cooperative demo</option></select><ChevronDown size={14} /></label> : <button className="button button-outline" onClick={() => void signOut()}><LogOut size={14} />Sign out</button>}</div>
+        <div className="topbar-actions"><NotificationCenter token={token} onNavigate={onNav} /><span className={`sync-state ${online ? "" : "offline"}`}><i />{online ? <Wifi size={14} /> : <CloudOff size={14} />}{online ? "Online" : "Offline"}{queued ? <b>{queued}</b> : null}</span><button className="icon-button refresh-button" title="Refresh records" onClick={() => void reload()}><RefreshCw size={17} /></button>{demoMode ? <label className="role-picker" aria-label="Switch synthetic demo role"><select value={role} onChange={(event) => void switchRole(event.target.value)}><option value="farmer">Farmer demo</option><option value="veterinarian">Veterinarian demo</option><option value="cooperative_admin">Cooperative demo</option></select><ChevronDown size={14} /></label> : <button className="button button-outline" onClick={() => void signOut()}><LogOut size={14} />Sign out</button>}</div>
       </header>
       <div className="content-wrap">
         <div className="page-heading"><div><p className="eyebrow">{isProcessor ? "PROCESSOR · ACCOUNTS PAYABLE" : isCoop ? "COOPERATIVE · SETTLEMENT OPERATIONS" : role === "veterinarian" ? "VETERINARY · ASSIGNED CASEWORK" : farm ? `${farm.county?.toUpperCase() || "KENYA"} · ${(farm.farming_system || "farm").toUpperCase()}` : "FARM IDENTITY & RECORDS"}</p><h1>{sectionTitle(active, isCoop, role)}</h1><p>{sectionDescription(active, farm?.name, isCoop, role)}</p></div><div className="heading-badges"><span className="synthetic-badge"><span />{demoMode ? "SYNTHETIC DEMO MODE" : isProcessor ? "PROCESSOR RECORDS" : isCoop ? "COOPERATIVE RECORDS" : farm?.is_synthetic ? "SYNTHETIC DEMO DATA" : farm ? "FARMER-SUBMITTED DATA" : "EMPTY WORKSPACE"}</span><span className="date-chip">{new Intl.DateTimeFormat("en-KE", { weekday: "short", day: "numeric", month: "short", year: "numeric" }).format(new Date())}</span></div></div>
 
         {loading && token ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={17} /> Syncing farm records…</div> : null}
         {workspaceError && !loading ? <div className="workspace-load-error" role="alert"><div><strong>Some workspace data could not be loaded</strong><p>{workspaceError}</p></div><button type="button" className="button button-outline" onClick={() => void reload()}><RefreshCw size={14} />Retry</button></div> : null}
-        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} initialCaseId={receivableFocusId} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} onOpenReceivable={openReceivable} token={token} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} /></> : null}
+        {(isCoop || isProcessor) && active === "receivables" ? <><TerravantaVideoFeature /><ReceivablesDesk role={role} token={token} initialCaseId={receivableFocusId} /></> : isCoop ? <CooperativeWorkspace section={active} deliveries={coopDeliveries} runs={reconciliationRuns} activeRun={activeReconciliation} closes={settlementCloses} activeClose={activeSettlementClose} busy={saving} importFile={importCollectionSheet} openRun={openReconciliationRun} reviewItem={reviewReconciliationItem} createClose={createSettlementClose} openClose={openSettlementClose} reviewException={reviewSettlementException} approveClose={approveSettlementClose} downloadPack={downloadSettlementPack} onNavigate={onNav} onOpenReceivable={openReceivable} token={token} /> : isProcessor ? active === "settings" ? <CooperativeAccessControls /> : <ReceivablesDesk role={role} token={token} /> : active === "overview" && role === "veterinarian" ? <><TerravantaVideoFeature /><VeterinarianDashboard cases={vetQueue} busy={saving} verify={verifyHealthEvent} onNavigate={onNav} /></> : active === "overview" ? <><TerravantaVideoFeature /><Overview dashboard={dashboard} alerts={alerts} resourceCycle={resourceCycle} loading={loading} error={workspaceError} onRetry={reload} onNavigate={onNav} />{farmId ? <FarmDecisionPanel farmId={farmId} token={token} onNavigate={onNav} /> : null}</> : null}
         {active === "farms" && !isCoop ? <FarmsView farm={farm} passport={passport} farmId={farmId} userName={currentUserName} token={token} busy={saving} submit={submitForm} reload={reload} revokeConsent={revokeConsent} /> : null}
         {active === "veterinary" && !isCoop ? <VeterinaryView animals={animals} farmId={farmId} token={token} role={role} busy={saving} submit={submitForm} askAssistant={askAssistant} aiResponse={aiResponse} cases={vetQueue} verify={verifyHealthEvent} recordFollowUp={recordHealthFollowUp} /> : null}
         {active === "crops" && !isCoop ? <CropsView farmId={farmId} plots={plots} cycle={resourceCycle} busy={saving} submit={submitForm} /> : null}
@@ -654,6 +655,61 @@ function Overview({ dashboard, alerts, resourceCycle, loading, error, onRetry, o
   </>;
 }
 
+function FarmDecisionPanel({ farmId, token, onNavigate }: { farmId: string; token: string; onNavigate: (section: Section) => void }) {
+  const [facts, setFacts] = useState<AnyRecord | null>(null);
+  const [answer, setAnswer] = useState<AnyRecord | null>(null);
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loadingFacts, setLoadingFacts] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadFacts = useCallback(async () => {
+    if (!farmId || !token) return;
+    setLoadingFacts(true);
+    setError("");
+    try { setFacts(await api(`/api/v1/farms/${farmId}/insights`, token)); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load farm indicators"); }
+    finally { setLoadingFacts(false); }
+  }, [farmId, token]);
+
+  useEffect(() => { void loadFacts(); }, [loadFacts]);
+
+  async function askFarmQuestion(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); setError(""); setAnswer(null);
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    try {
+      setAnswer(await api(`/api/v1/farms/${farmId}/ai-assistant`, token, {
+        method: "POST",
+        body: JSON.stringify({ question, allow_external_processing: values.get("allow_external_processing") === "on" }),
+      }));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Terras could not review these records"); }
+    finally { setBusy(false); }
+  }
+
+  const counts = facts?.record_counts;
+  return <section className="card farm-intelligence-panel">
+    <div className="farm-intelligence-head"><div><p className="eyebrow">TERRAS · FARM DECISION SUPPORT</p><h2>What do the farm records suggest?</h2><p className="muted">Transparent indicators across livestock, feed, crops, production and traceability. These summaries describe recorded data; they do not certify outcomes.</p></div><button type="button" className="button button-outline button-small" onClick={() => void loadFacts()} disabled={loadingFacts}><RefreshCw size={14} />Refresh</button></div>
+    {error ? <div className="workspace-load-error" role="alert"><p>{error}</p></div> : null}
+    {loadingFacts ? <div className="loading-strip" role="status"><LoaderCircle className="spinner" size={16} />Calculating record indicators…</div> : facts ? <>
+      <div className="farm-intelligence-metrics">
+        <div><span>Livestock</span><strong>{counts.animals}</strong><small>{counts.open_veterinary_cases} open veterinary cases</small></div>
+        <div><span>Crop plots</span><strong>{counts.plots}</strong><small>{counts.fodder_plots} recorded as feed crops</small></div>
+        <div><span>Feed stock</span><strong>{Number(counts.feed_stock_kg_recorded).toLocaleString("en-KE")} kg</strong><small>{Number(counts.feed_allocated_kg_last_30_days).toLocaleString("en-KE")} kg allocated in 30 days</small></div>
+        <div><span>Traceability</span><strong>{counts.source_linked_deliveries}/{counts.deliveries}</strong><small>deliveries linked to source production</small></div>
+      </div>
+      {facts.production_comparison?.length ? <div className="farm-intelligence-production"><strong>Production records · current and previous 14-day windows</strong>{facts.production_comparison.slice(0, 4).map((item: AnyRecord) => <div key={`${item.product_type}-${item.unit}`}><span>{item.product_type} · {item.unit}</span><span>{item.current_window.total} ({item.current_window.days_recorded} days) <i>vs</i> {item.prior_window.total} ({item.prior_window.days_recorded} days)</span><small>{item.comparison_note}</small></div>)}</div> : null}
+      {facts.plot_production_last_90_days?.length ? <div className="farm-intelligence-production"><strong>Harvest linked to plots · last 90 days</strong>{facts.plot_production_last_90_days.slice(0, 6).map((item: AnyRecord) => <div key={`${item.plot_name}-${item.product_type}-${item.unit}`}><span>{item.plot_name} · {item.crop_type}</span><span>{item.quantity} {item.unit} · {item.product_type}</span></div>)}</div> : null}
+      {facts.review_actions?.length ? <div className="farm-intelligence-actions"><strong>Useful next steps from the record rules</strong>{facts.review_actions.map((item: AnyRecord) => <button type="button" key={item.title} onClick={() => onNavigate(item.destination)}><span><b>{item.title}</b><small>{item.detail}</small></span><ArrowRight size={15} /></button>)}</div> : null}
+      {facts.data_gaps?.length ? <details className="farm-intelligence-gaps"><summary>Data gaps affecting analysis ({facts.data_gaps.length})</summary><ul>{facts.data_gaps.map((item: string) => <li key={item}>{item}</li>)}</ul></details> : null}
+      <form className="farm-intelligence-ask" onSubmit={askFarmQuestion}><div><strong>Ask Terras about these records</strong><small>Get a draft grounded in the current farm snapshot and approved sources, if configured.</small></div><label className="field"><span className="sr-only">Question about your farm</span><textarea required minLength={4} maxLength={1200} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="For example: What information is missing to compare milk output and feed use?" /></label><label className="check-row"><input type="checkbox" name="allow_external_processing" /><span><strong>Allow this farm-record summary and my question to be sent to NVIDIA</strong><small>No request is sent unless checked. Farm snapshot excludes account and animal identifiers; crop/feed labels and quantities may be sent. Remove names or contact details from your question.</small></span></label><button className="button button-primary" disabled={busy || !question.trim()}>{busy ? <LoaderCircle className="spinner" size={14} /> : <Sparkles size={15} />}{busy ? "Preparing draft…" : "Ask for a review draft"}</button></form>
+      {answer ? <div className="ai-response farm-ai-response" role="status"><div className="ai-response-head"><Sparkles size={16} /><strong>{answer.model_generated ? "AI review draft" : answer.status.replaceAll("_", " ")}</strong><StatusPill tone={answer.model_generated ? "amber" : "neutral"}>{answer.model_generated ? "Human review required" : "No model answer"}</StatusPill></div><p>{answer.answer}</p><small>{answer.safety_note}</small>{answer.sources?.length ? <div className="source-citations"><strong>Approved sources</strong>{answer.sources.map((source: AnyRecord) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer">{source.title} ↗</a>)}</div> : null}<details><summary>Record snapshot used</summary><pre>{JSON.stringify(answer.facts?.record_counts, null, 2)}</pre></details></div> : null}
+      <small className="farm-intelligence-limit">No nutrient adequacy, clinical outcome, food-safety status, causal yield change or financial return is inferred. Advice that affects animal health or input use needs qualified review.</small>
+    </> : null}
+  </section>;
+}
+
 function TerravantaVideoFeature() {
   return <section className="card product-video-feature" aria-labelledby="product-video-title">
     <div className="product-video-copy"><p className="eyebrow">RECEIVABLES ASSURANCE</p><h2 id="product-video-title">One claim record. Every position kept clear.</h2><p>See how a cooperative claim, the processor’s response, the reviewed aging basis and the uploaded evidence stay together for follow-up.</p><span className="product-video-note"><ShieldCheck size={14} />Synthetic example · no live connector · no payment or recovery claim</span></div>
@@ -731,6 +787,9 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
   const [followUpStatus, setFollowUpStatus] = useState("completed");
   const [clinicalOutcome, setClinicalOutcome] = useState("improving");
   const [caseDisposition, setCaseDisposition] = useState("continue_follow_up");
+  const [contactRequests, setContactRequests] = useState<AnyRecord[]>([]);
+  const [contactError, setContactError] = useState("");
+  const [contactBusy, setContactBusy] = useState(false);
 
   const loadHealthEvents = useCallback(async () => {
     if (!farmId || !token) return;
@@ -746,6 +805,15 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
   }, [farmId, token]);
 
   useEffect(() => { void loadHealthEvents(); }, [loadHealthEvents, refreshKey]);
+
+  useEffect(() => {
+    if (!farmId || !token) return;
+    let active = true;
+    api(`/api/v1/farms/${farmId}/veterinary-contact-requests`, token)
+      .then((rows) => { if (active) { setContactRequests(rows); setContactError(""); } })
+      .catch((error) => { if (active) setContactError(error instanceof Error ? error.message : "Could not load contact requests"); });
+    return () => { active = false; };
+  }, [farmId, token, refreshKey]);
 
   useEffect(() => {
     if (!selectedEventId || !token) { setFollowUpDetails(null); return; }
@@ -775,7 +843,53 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
     }
   }
 
+  async function requestVeterinarian(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    setContactBusy(true);
+    setContactError("");
+    try {
+      const created = await api(`/api/v1/farms/${farmId}/veterinary-contact-requests`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          animal_id: values.animal_id || null,
+          message: values.message || "",
+          urgency: values.urgency,
+          preferred_contact_method: values.preferred_contact_method,
+        }),
+      });
+      setContactRequests((current) => [created, ...current]);
+      form.reset();
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : "Could not send the veterinarian request");
+    } finally { setContactBusy(false); }
+  }
+
+  async function updateContactRequest(requestId: string, status: string) {
+    setContactBusy(true);
+    setContactError("");
+    try {
+      const updated = await api(`/api/v1/veterinary-contact-requests/${requestId}`, token, {
+        method: "PATCH", body: JSON.stringify({ status }),
+      });
+      setContactRequests((current) => current.map((item) => item.id === updated.id ? updated : item));
+    } catch (error) {
+      setContactError(error instanceof Error ? error.message : "Could not update this request");
+    } finally { setContactBusy(false); }
+  }
+
   return <div className="stacked">
+    {contactError ? <div className="workspace-load-error" role="alert"><p>{contactError}</p></div> : null}
+    {role === "farmer" ? <section className="card"><PanelTitle eyebrow="VETERINARIAN CONTACT" title="Request a vet to contact you" description="Send a request to veterinarians assigned to this farm. The request is not an emergency dispatch." /><form className="form-grid" onSubmit={requestVeterinarian}>
+      <SelectField label="Animal (optional)" name="animal_id" required={false} options={animals.map((animal: AnyRecord) => ({ label: `${animal.name} · ${animal.tag}`, value: animal.id }))} />
+      <SelectField label="How soon?" name="urgency" options={[{ label: "Routine", value: "routine" }, { label: "Urgent", value: "urgent" }, { label: "Emergency · use direct local help now", value: "emergency" }]} />
+      <SelectField label="Preferred contact method" name="preferred_contact_method" options={[{ label: "Phone call", value: "phone_call" }, { label: "WhatsApp (preference only; not connected yet)", value: "whatsapp" }, { label: "Terravanta inbox", value: "in_app" }]} />
+      <label className="field span-two"><span>What should the vet know?</span><textarea name="message" maxLength={1200} placeholder="Describe what you observed and when it started. Avoid entering treatment instructions." /></label>
+      <button className="button button-primary form-submit" disabled={contactBusy || !farmId}><Stethoscope size={15} />{contactBusy ? "Sending request…" : "Request veterinarian contact"}</button>
+    </form><small className="muted">Terravanta notifies the farm’s assigned veterinarians in the app. Phone calls and WhatsApp messages are not sent by this version. For an emergency, contact a veterinarian or local emergency service directly.</small>
+    {contactRequests.length ? <div className="table-scroll contact-request-history"><table><thead><tr><th>Request</th><th>Urgency</th><th>Preferred channel</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>{contactRequests.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name || "Farm-wide"}</strong><small className="cell-sub">{item.message || "No note added"}</small></td><td><StatusPill tone={item.urgency === "emergency" ? "red" : item.urgency === "urgent" ? "amber" : "neutral"}>{item.urgency}</StatusPill></td><td>{item.preferred_contact_method.replaceAll("_", " ")}</td><td><StatusPill tone={item.status === "accepted" || item.status === "contacted" ? "green" : item.status === "declined" ? "red" : "amber"}>{item.status}</StatusPill><small className="cell-sub">{item.veterinarian_name ? `Vet: ${item.veterinarian_name}` : "Awaiting a veterinarian"}</small></td><td>{new Date(item.created_at).toLocaleDateString("en-KE")}</td><td>{item.status === "pending" ? <button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "cancelled")}>Cancel</button> : null}</td></tr>)}</tbody></table></div> : null}</section> : null}
+    {role === "veterinarian" ? <section className="card"><PanelTitle eyebrow="FARMER CONTACT REQUESTS" title={`${contactRequests.filter((item) => item.status === "pending" || item.status === "accepted").length} requests need a response`} description="Accepting assigns the request to you. A response is recorded in the farm audit trail and notifies the farmer in Terravanta." />{contactRequests.length ? <div className="table-scroll"><table><thead><tr><th>Animal</th><th>Farmer note</th><th>Urgency / preference</th><th>Status</th><th>Action</th></tr></thead><tbody>{contactRequests.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name || "Farm-wide"}</strong><small className="cell-sub">{item.animal_tag || item.farm_id}</small></td><td>{item.message || "No note added"}<small className="cell-sub">From {item.requester_name}</small></td><td><StatusPill tone={item.urgency === "emergency" ? "red" : item.urgency === "urgent" ? "amber" : "neutral"}>{item.urgency}</StatusPill><small className="cell-sub">Prefers {item.preferred_contact_method.replaceAll("_", " ")}</small></td><td><StatusPill tone={item.status === "accepted" || item.status === "contacted" ? "green" : item.status === "declined" ? "red" : "amber"}>{item.status}</StatusPill></td><td><div className="review-actions">{item.status === "pending" ? <><button type="button" className="button button-primary button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "accepted")}>Accept</button><button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "declined")}>Decline</button></> : item.status === "accepted" && item.veterinarian_user_id ? <button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "contacted")}>Mark contacted</button> : null}</div></td></tr>)}</tbody></table></div> : <Empty title="No farmer contact requests" detail="New requests for this farm will appear here." />}</section> : null}
     {role === "veterinarian" ? <section className="card"><PanelTitle eyebrow="VETERINARY REVIEW QUEUE" title={`${cases.length} open cases`} description="Review farmer-submitted events, verify the record you assessed, and record what happened at follow-up." />{cases.length ? <div className="table-scroll"><table><thead><tr><th>Animal / farm</th><th>Clinical event</th><th>Follow-up date</th><th>Verification</th><th></th></tr></thead><tbody>{cases.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name} · {item.animal_tag}</strong><small className="cell-sub">{item.farm_name}</small></td><td>{item.summary}<small className="cell-sub">Occurred {item.occurred_on}</small></td><td>{item.follow_up_on || "Not recorded"}</td><td><StatusPill tone={item.verified ? "green" : "amber"}>{item.verified ? "Verified" : "Needs review"}</StatusPill></td><td><div className="review-actions"><button className="button button-outline button-small" onClick={() => setSelectedEventId(item.id)}>Open case</button>{item.verified ? null : <button className="button button-outline button-small" disabled={busy} onClick={() => void verify(item.id)}>Verify</button>}</div></td></tr>)}</tbody></table></div> : <Empty title="No open clinical cases" detail="New health events for assigned farms will appear in your queue." />}</section> : null}
 
     <section className="card">
