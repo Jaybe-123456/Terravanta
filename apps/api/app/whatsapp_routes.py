@@ -12,14 +12,14 @@ from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .db import WhatsAppWebhookSessionLocal, get_scoped_db
+from .db import WhatsAppWebhookSessionLocal
 from .models import (
     AuditLog, CommunicationOutbox, FarmMember, FarmDomainEvent, MetaWebhookEvent,
     Notification, User, VeterinaryContactMessage, VeterinaryContactRequest,
     WhatsAppLinkChallenge, WhatsAppPreference,
 )
 from .schemas import WhatsAppPairingCreate
-from .security import current_user
+from .security import current_user, get_scoped_db
 from .whatsapp import (
     PAIRING_TERMS_VERSION,
     MAX_META_WEBHOOK_BYTES,
