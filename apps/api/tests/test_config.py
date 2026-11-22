@@ -1,3 +1,5 @@
+import pytest
+
 from app.config import Settings
 from app.main import app
 
@@ -58,3 +60,33 @@ def test_email_code_auth_routes_are_removed_from_public_api():
     assert "/api/v1/auth/request-access-code" not in paths
     assert "/api/v1/auth/access-code-login" not in paths
     assert "/api/v1/auth/onboard" in paths
+
+
+def test_enabled_whatsapp_sender_requires_complete_configuration_on_api_and_worker():
+    common = {
+        "_env_file": None,
+        "app_env": "test",
+        "meta_wa_send_enabled": True,
+        "meta_wa_access_token": "test-token",
+        "meta_wa_phone_number_id": "test-phone-id",
+        "meta_wa_graph_api_version": "v22.0",
+        "meta_wa_notification_template": "vet_contact_update",
+    }
+
+    api_settings = Settings(**common, service_mode="api")
+    assert api_settings.whatsapp_delivery_configured is True
+
+    with pytest.raises(ValueError, match="WHATSAPP_WORKER_DATABASE_URL"):
+        Settings(**common, service_mode="worker")
+
+    with pytest.raises(ValueError, match="META_WA_ACCESS_TOKEN"):
+        Settings(
+            **{**common, "meta_wa_access_token": ""},
+            service_mode="api",
+        )
+
+    with pytest.raises(ValueError, match="META_WA_GRAPH_API_VERSION"):
+        Settings(
+            **{**common, "meta_wa_graph_api_version": "latest"},
+            service_mode="api",
+        )

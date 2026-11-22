@@ -30,13 +30,17 @@ The database role `terravanta_worker` inherits normal application privileges and
 
 Signed webhook processing uses a separate `terravanta_webhook` NOLOGIN role, with RLS policies and table/column grants limited to verified phone pairing, veterinary request participants, channel messages and delivery receipts. Configure its separate login as `WHATSAPP_WEBHOOK_DATABASE_URL` on the API. The webhook handler does not use the migration owner URL or the regular API runtime login.
 
-Outbound messages are not enabled in this repository configuration. No Meta credentials, production number, approved template, or live webhook has been provisioned or verified. To enable the channel later:
+Outbound messages are not enabled in this repository configuration. No Meta credentials, production number, approved template, or live webhook has been provisioned or verified. On Render Free, the API may handle a manual test while warm, but Free services sleep after 15 minutes without inbound traffic and can take about a minute to wake. Render does not offer Free background workers or cron jobs. Treat this as a test-only integration until an always-on API and a metered job runner are provisioned; Meta webhook retries are not a substitute for an always-available receiver. See [Render Free limitations](https://render.com/docs/free) and [Render pricing](https://render.com/pricing).
 
-1. Apply migration `0013_whatsapp_delivery_safety` with the migration owner before deploying the web UI.
+For a low-volume deployment without an always-on worker, `python -m app.worker --once` runs one bounded pass of the workflow and WhatsApp queues and exits. A manually configured Render Cron Job can call it on a schedule, but Cron compute is metered and is not free. The continuous `python -m app.worker` command remains the option for a dedicated worker service.
+
+To enable and verify the channel later:
+
+1. Confirm the API deploy logs show Alembic applied migration `0013_whatsapp_delivery_safety` before configuring Meta.
 2. Create the `terravanta_webhook_runtime` login after the migration and set `WHATSAPP_WEBHOOK_DATABASE_URL` on the API service. Also set `WHATSAPP_PAIRING_SECRET`, `META_WA_BUSINESS_NUMBER`, `META_WA_PHONE_NUMBER_ID`, `META_WA_APP_SECRET`, and `META_WA_VERIFY_TOKEN` to allow pairing and signed webhooks. Keep `META_WA_SEND_ENABLED=false` until the worker is ready.
-3. Prepare the worker-only database login after the migration, set `WHATSAPP_WORKER_DATABASE_URL` to its internal Render URL, and leave API `DATABASE_URL` on `terravanta_runtime`.
-4. To enable outbound sends, set `META_WA_SEND_ENABLED=true` on API and worker, then set the following only on the worker service. Do not enable the flag in only one service.
-5. Register `https://terravanta.onrender.com/api/v1/integrations/meta/whatsapp/webhook` in Meta with GET and POST subscriptions for WhatsApp messages, and use the same verify token as the API environment value.
+3. Register `https://terravanta.onrender.com/api/v1/integrations/meta/whatsapp/webhook` in Meta with GET and POST subscriptions for WhatsApp messages, and use the same verify token as the API environment value. Keep sending disabled; pairing and inbound thread messages do not require the sender worker.
+4. For outbound sends, prepare the worker-only database login and configure a metered Cron Job (`python -m app.worker --once`) or paid worker with `WHATSAPP_WORKER_DATABASE_URL`. Keep worker `DATABASE_URL` on `terravanta_runtime`; never provide the owner migration URL to it.
+5. After Meta's access token, explicit Graph API version, approved utility template and delivery runner are ready, set `META_WA_SEND_ENABLED=true` on API and runner together. Do not enable the flag in only one service. Run one controlled pairing, request alert, inbound thread reply and delivery-receipt check before inviting pilot users.
 
 Backend environment variables:
 

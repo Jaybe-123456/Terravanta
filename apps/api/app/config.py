@@ -138,14 +138,15 @@ class Settings(BaseSettings):
         if self.app_env.lower() == "production" and (self.meta_wa_app_secret or self.meta_wa_verify_token):
             if not self.whatsapp_webhook_database_url:
                 raise ValueError("Production Meta webhook requires WHATSAPP_WEBHOOK_DATABASE_URL using the restricted webhook role")
-        if self.meta_wa_send_enabled and self.service_mode == "worker":
+        if self.meta_wa_send_enabled:
             missing = [name for name, value in (
                 ("META_WA_ACCESS_TOKEN", self.meta_wa_access_token),
                 ("META_WA_PHONE_NUMBER_ID", self.meta_wa_phone_number_id),
                 ("META_WA_GRAPH_API_VERSION", self.meta_wa_graph_api_version),
                 ("META_WA_NOTIFICATION_TEMPLATE", self.meta_wa_notification_template),
-                ("WHATSAPP_WORKER_DATABASE_URL", self.whatsapp_worker_database_url),
             ) if not value]
+            if self.service_mode == "worker" and not self.whatsapp_worker_database_url:
+                missing.append("WHATSAPP_WORKER_DATABASE_URL")
             if missing:
                 raise ValueError("WhatsApp sending is enabled but required settings are missing: " + ", ".join(missing))
             if not re.fullmatch(r"v\d+\.\d+", self.meta_wa_graph_api_version):

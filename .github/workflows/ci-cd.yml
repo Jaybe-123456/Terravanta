@@ -86,6 +86,8 @@ jobs:
         run: alembic upgrade head
       - name: Verify tenant isolation and consent-limited reads
         run: python scripts/verify_rls_smoke.py
+      - name: Verify WhatsApp database role boundaries
+        run: python scripts/verify_whatsapp_roles.py
       - name: Verify PostGIS and migration head
         run: |
           python - <<'PY'

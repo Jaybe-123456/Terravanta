@@ -1,4 +1,5 @@
 """Poll the durable workflow queue. No model call or clinical write occurs here."""
+import argparse
 import logging
 import time
 from datetime import datetime, timezone
@@ -154,10 +155,29 @@ def maintain_whatsapp_retention_once() -> int:
         return int(count)
 
 
-def main() -> None:
+def run_once() -> tuple[int, int]:
+    """Run one bounded pass for metered cron environments without free workers."""
+    workflows = process_due_workflows_once()
+    whatsapp = process_whatsapp_outbox_once()
+    log.info("One-shot worker completed: workflows=%s whatsapp=%s", workflows, whatsapp)
+    return workflows, whatsapp
+
+
+def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if settings.service_mode != "worker":
         raise RuntimeError("Set SERVICE_MODE=worker before starting the workflow worker")
+    parser = argparse.ArgumentParser(description="Process Terravanta workflow and WhatsApp queues")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Process one bounded batch and exit; suitable for a metered scheduled job",
+    )
+    args = parser.parse_args(argv)
+    if args.once:
+        run_once()
+        return
+
     interval = max(5, min(settings.workflow_poll_seconds, 300))
     last_retention_maintenance = 0.0
     log.info("Workflow worker started; poll interval=%ss", interval)

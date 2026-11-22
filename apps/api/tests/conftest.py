@@ -32,6 +32,15 @@ def db_session():
         yield db
 
 
+@pytest.fixture
+def whatsapp_db_session_factory(monkeypatch):
+    """Send signed webhook handlers to the same isolated SQLite test database."""
+    from app import whatsapp_routes
+
+    monkeypatch.setattr(whatsapp_routes, "WhatsAppWebhookSessionLocal", TestingSession)
+    return TestingSession
+
+
 @pytest.fixture(scope="session")
 def client():
     def override_db():

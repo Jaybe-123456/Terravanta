@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text, update
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .config import settings
 from .db import WhatsAppWebhookSessionLocal
@@ -172,7 +173,10 @@ def verify_meta_webhook(request: Request):
     return Response(content=challenge, media_type="text/plain")
 
 
-@router.post("/api/v1/integrations/meta/whatsapp/webhook")
+@router.post(
+    "/api/v1/integrations/meta/whatsapp/webhook",
+    max_body_size=MAX_META_WEBHOOK_BYTES,
+)
 async def receive_meta_webhook(request: Request):
     if not settings.whatsapp_webhook_configured:
         raise HTTPException(503, "Meta WhatsApp webhook processing is not configured")
@@ -196,25 +200,38 @@ async def receive_meta_webhook(request: Request):
         raise HTTPException(400, "Unsupported Meta webhook payload")
 
     try:
-        for entry in payload["entry"]:
-            for change in entry.get("changes", []) if isinstance(entry, dict) else []:
-                value = change.get("value", {}) if isinstance(change, dict) else {}
-                if not isinstance(value, dict):
-                    continue
-                metadata = value.get("metadata")
-                if not isinstance(metadata, dict) or metadata.get("phone_number_id") != settings.meta_wa_phone_number_id:
-                    log.warning("Ignored signed WhatsApp event for an unconfigured business phone")
-                    continue
-                for status in value.get("statuses", []) if isinstance(value.get("statuses"), list) else []:
-                    _process_status(status)
-                for message in value.get("messages", []) if isinstance(value.get("messages"), list) else []:
-                    _process_inbound_message(message)
+        # SQLAlchemy and psycopg are synchronous. Keep DB work off the ASGI
+        # event loop so a webhook batch cannot stall unrelated API requests.
+        await run_in_threadpool(_process_meta_webhook_payload, payload)
     except HTTPException:
         raise
     except Exception as exc:
         log.error("WhatsApp webhook event processing failed (%s)", type(exc).__name__)
         raise HTTPException(503, "Webhook event could not be processed; Meta may retry") from exc
     return {"received": True}
+
+
+def _process_meta_webhook_payload(payload: dict) -> None:
+    for entry in payload["entry"]:
+        changes = entry.get("changes", []) if isinstance(entry, dict) else []
+        if not isinstance(changes, list):
+            continue
+        for change in changes:
+            value = change.get("value", {}) if isinstance(change, dict) else {}
+            if not isinstance(value, dict):
+                continue
+            metadata = value.get("metadata")
+            if not isinstance(metadata, dict) or metadata.get("phone_number_id") != settings.meta_wa_phone_number_id:
+                log.warning("Ignored signed WhatsApp event for an unconfigured business phone")
+                continue
+            statuses = value.get("statuses", [])
+            if isinstance(statuses, list):
+                for status in statuses:
+                    _process_status(status)
+            messages = value.get("messages", [])
+            if isinstance(messages, list):
+                for message in messages:
+                    _process_inbound_message(message)
 
 
 def _reserve_event(db, provider_event_id: str, event_type: str) -> MetaWebhookEvent | None:
@@ -362,7 +379,12 @@ def _complete_pairing(db, event: MetaWebhookEvent, phone: str, code: str) -> Non
         return
     challenge = db.query(WhatsAppLinkChallenge).filter_by(code_hash=pairing_code_hash(code)).with_for_update().first()
     now = datetime.now(timezone.utc)
-    if not challenge or challenge.consumed_at or challenge.expires_at <= now:
+    expires_at = challenge.expires_at if challenge else None
+    # SQLite strips timezone metadata from DateTime(timezone=True); treat naive
+    # values as UTC so local/offline development follows PostgreSQL semantics.
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not challenge or challenge.consumed_at or expires_at <= now:
         event.processing_status = "ignored"
         event.safe_error_code = "pairing_code_invalid_or_expired"
         event.processed_at = now
