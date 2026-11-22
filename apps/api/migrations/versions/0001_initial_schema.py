@@ -23,6 +23,13 @@ def upgrade():
     initial_tables = [
         table for table in Base.metadata.sorted_tables
         if table.name not in {
+            # Tables introduced by later revisions must not be backfilled by
+            # this metadata-driven historical baseline. Keep the revision
+            # stable even though the ORM models continue to evolve.
+            "access_codes", "animal_health_follow_ups", "farm_domain_events",
+            "workflow_runs", "notifications", "veterinary_contact_requests",
+            "veterinary_contact_messages", "whatsapp_preferences",
+            "whatsapp_link_challenges", "communication_outbox", "meta_webhook_events",
             "reconciliation_runs", "reconciliation_items", "settlement_closes", "settlement_close_items",
             "evidence_artifacts", "source_mapping_profiles", "counterparty_relationships", "supply_contracts",
             "receivable_cases", "receivable_case_lines", "receivable_evidence_links",
