@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, Eye, EyeOff, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, Plus, ReceiptText, RefreshCw, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Check, ChevronDown, CircleHelp, CloudOff, Download, Eye, EyeOff, FileText, FileUp, GitBranch, Leaf, LoaderCircle, LogOut, Menu, MessageCircle, Plus, ReceiptText, RefreshCw, Send, ShieldCheck, Sparkles, Stethoscope, Upload, Wifi, X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { Sidebar, type Section } from "@/components/sidebar";
 import { TerrasWidget } from "@/components/terras-widget";
@@ -777,6 +777,58 @@ function FarmsView({ farm, passport, farmId, userName, busy, submit, revokeConse
   return <div className="two-column"><section className="card"><PanelTitle eyebrow="FARM IDENTITY" title={farm?.name || "Register a farm"} description="Submitted information is clearly separated from verified records." /><div className="farm-id-card"><div className="farm-emblem"><Leaf size={22} /></div><div><small>FARM IDENTIFIER</small><strong>{farm?.code || "Created after registration"}</strong></div><StatusPill tone={farm?.verification_status === "verified" ? "green" : "amber"}>{String(farm?.verification_status || "farmer_submitted").replaceAll("_", " ")}</StatusPill></div>{farm ? <div className="detail-grid">{[["Owner", farm.owner_name], ["Location", `${farm.subcounty}, ${farm.county}`], ["Farm size", `${farm.size_acres} acres`], ["Farming system", farm.farming_system], ["Coordinates", farm.latitude ? `${farm.latitude}, ${farm.longitude}` : "Not recorded"], ["Record source", farm.is_synthetic ? "Synthetic demonstration data" : "Farmer submitted"]].map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div> : <Empty title="No farms yet" detail="Register a farm to start building its digital passport." />}<div className="subsection-title"><h3>{farm ? "Add another farm" : "Create farm identity"}</h3></div><form className="form-grid" onSubmit={(event) => submit(event, "/api/v1/farms", (v: FormValues) => ({ name: v.name, owner_name: v.owner_name, county: v.county, subcounty: v.subcounty, latitude: v.latitude ? Number(v.latitude) : null, longitude: v.longitude ? Number(v.longitude) : null, size_acres: Number(v.size_acres), farming_system: v.farming_system, production_activities: String(v.production_activities || "").split(",").map((s) => s.trim()).filter(Boolean) }))}><Field label="Farm name" name="name" placeholder="e.g. Sunrise Mixed Farm" /><Field label="Owner" name="owner_name" placeholder="Full name" defaultValue={userName} /><Field label="County" name="county" placeholder="County" /><Field label="Subcounty" name="subcounty" placeholder="Subcounty" /><Field label="Area (acres)" name="size_acres" type="number" step="0.1" min="0" /><Field label="Farming system" name="farming_system" defaultValue="mixed" /><Field label="Latitude" name="latitude" type="number" step="any" required={false} /><Field label="Longitude" name="longitude" type="number" step="any" required={false} /><label className="field span-two"><span>Production activities (comma separated)</span><input name="production_activities" placeholder="Dairy, maize, fodder" /></label><button className="button button-primary form-submit" disabled={busy}><Plus size={15} />{busy ? "Saving…" : "Register farm"}</button></form></section><div className="stacked"><section className="card passport-card"><PanelTitle eyebrow="DIGITAL FARM PASSPORT" title="Verified record summary" description="Record counts and provenance for this farm." />{passport ? <><div className="passport-counts">{Object.entries(passport.counts || {}).map(([key, value]) => <div key={key}><strong>{value as string | number}</strong><span>{key.replaceAll("_", " ")}</span></div>)}</div><div className="provenance-list"><p><i className="source-dot farmer-dot" /> Farmer submitted <span>Farm profile</span></p><p><i className="source-dot vet-dot" /> Veterinarian verified <span>{passport.counts?.health_events_verified || 0} health events</span></p><p><i className="source-dot system-dot" /> System generated <span>Identifiers and alerts</span></p></div></> : <Empty title="Passport is empty" detail="Add verified records to build the passport." />}</section><section className="card"><PanelTitle eyebrow="LOCATION" title={farm?.county || "Farm location"} /><div className="map-placeholder"><span className="map-contour contour-one" /><span className="map-contour contour-two" /><span className="map-pin"><Leaf size={16} /></span><div className="map-label">{farm?.name || "Farm location"}<small>{farm?.subcounty || "Location pending"} · {farm?.latitude ?? "coordinates pending"}</small></div><span className="map-scale">N ↑</span></div><small className="map-caption">Location from farmer-submitted coordinates. No boundary verification is shown.</small></section></div></div>;
 }
 
+function VetContactConversation({ request, token, role, onClose }: { request: AnyRecord; token: string; role: string; onClose: () => void }) {
+  const [items, setItems] = useState<AnyRecord[]>([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const canReply = request.status === "pending" && role === "farmer"
+    || ["accepted", "contacted"].includes(request.status) && (role === "farmer" || request.veterinarian_user_id);
+
+  const loadMessages = useCallback(async () => {
+    try {
+      const result = await api(`/api/v1/veterinary-contact-requests/${request.id}/messages`, token);
+      setItems(result.items || []);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load this conversation");
+    } finally { setLoading(false); }
+  }, [request.id, token]);
+
+  useEffect(() => {
+    void loadMessages();
+    const timer = window.setInterval(() => { void loadMessages(); }, 20000);
+    return () => window.clearInterval(timer);
+  }, [loadMessages]);
+
+  async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = draft.trim();
+    if (!body || sending) return;
+    setSending(true);
+    setError("");
+    try {
+      const saved = await api(`/api/v1/veterinary-contact-requests/${request.id}/messages`, token, {
+        method: "POST",
+        body: JSON.stringify({ body, client_message_id: crypto.randomUUID() }),
+      });
+      setItems((current) => current.some((item) => item.id === saved.id) ? current : [...current, saved]);
+      setDraft("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send this message");
+    } finally { setSending(false); }
+  }
+
+  return <section className="vet-conversation" aria-label="Veterinarian request conversation">
+    <header><div><span className="conversation-icon"><MessageCircle size={16} /></span><div><strong>Request conversation</strong><small>{request.animal_name || "Farm-wide"} · in-app messages</small></div></div><button type="button" className="icon-button" aria-label="Close conversation" onClick={onClose}><X size={16} /></button></header>
+    {error ? <div className="workspace-load-error" role="alert"><p>{error}</p><button type="button" className="button button-outline button-small" onClick={() => void loadMessages()}>Retry</button></div> : null}
+    <div className="vet-message-list" aria-live="polite">{loading ? <p className="muted">Loading conversation…</p> : items.length ? items.map((item) => <article className={`vet-message ${item.is_mine ? "mine" : ""}`} key={item.id}><div><strong>{item.is_mine ? "You" : item.sender_name}</strong><time>{new Date(item.created_at).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</time></div><p>{item.body}</p><small>{item.channel === "whatsapp" ? "WhatsApp" : "Terravanta inbox"}</small></article>) : <p className="muted">No replies yet. Use this thread to coordinate the contact request.</p>}</div>
+    {canReply ? <form className="vet-message-compose" onSubmit={sendMessage}><label className="field"><span className="sr-only">Message</span><textarea value={draft} onChange={(event) => setDraft(event.target.value)} required maxLength={4000} rows={2} placeholder="Write a message…" /></label><button className="button button-primary" disabled={sending || !draft.trim()}><Send size={14} />{sending ? "Sending…" : "Send"}</button></form> : <p className="muted conversation-closed-note">Replies are available to the farmer and the veterinarian assigned to this request.</p>}
+    <small className="conversation-disclaimer">Messages coordinate contact and are not verified clinical records. For emergencies, contact local veterinary help directly.</small>
+  </section>;
+}
+
 function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssistant, aiResponse, cases, verify, recordFollowUp }: AnyRecord) {
   const [healthEvents, setHealthEvents] = useState<AnyRecord[]>([]);
   const [selectedEventId, setSelectedEventId] = useState("");
@@ -790,6 +842,7 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
   const [contactRequests, setContactRequests] = useState<AnyRecord[]>([]);
   const [contactError, setContactError] = useState("");
   const [contactBusy, setContactBusy] = useState(false);
+  const [conversationRequestId, setConversationRequestId] = useState("");
 
   const loadHealthEvents = useCallback(async () => {
     if (!farmId || !token) return;
@@ -879,6 +932,8 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
     } finally { setContactBusy(false); }
   }
 
+  const activeContactRequest = contactRequests.find((item) => item.id === conversationRequestId);
+
   return <div className="stacked">
     {contactError ? <div className="workspace-load-error" role="alert"><p>{contactError}</p></div> : null}
     {role === "farmer" ? <section className="card"><PanelTitle eyebrow="VETERINARIAN CONTACT" title="Request a vet to contact you" description="Send a request to veterinarians assigned to this farm. The request is not an emergency dispatch." /><form className="form-grid" onSubmit={requestVeterinarian}>
@@ -891,6 +946,8 @@ function VeterinaryView({ animals, farmId, token, role, busy, submit, askAssista
     {contactRequests.length ? <div className="table-scroll contact-request-history"><table><thead><tr><th>Request</th><th>Urgency</th><th>Preferred channel</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>{contactRequests.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name || "Farm-wide"}</strong><small className="cell-sub">{item.message || "No note added"}</small></td><td><StatusPill tone={item.urgency === "emergency" ? "red" : item.urgency === "urgent" ? "amber" : "neutral"}>{item.urgency}</StatusPill></td><td>{item.preferred_contact_method.replaceAll("_", " ")}</td><td><StatusPill tone={item.status === "accepted" || item.status === "contacted" ? "green" : item.status === "declined" ? "red" : "amber"}>{item.status}</StatusPill><small className="cell-sub">{item.veterinarian_name ? `Vet: ${item.veterinarian_name}` : "Awaiting a veterinarian"}</small></td><td>{new Date(item.created_at).toLocaleDateString("en-KE")}</td><td>{item.status === "pending" ? <button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "cancelled")}>Cancel</button> : null}</td></tr>)}</tbody></table></div> : null}</section> : null}
     {role === "veterinarian" ? <section className="card"><PanelTitle eyebrow="FARMER CONTACT REQUESTS" title={`${contactRequests.filter((item) => item.status === "pending" || item.status === "accepted").length} requests need a response`} description="Accepting assigns the request to you. A response is recorded in the farm audit trail and notifies the farmer in Terravanta." />{contactRequests.length ? <div className="table-scroll"><table><thead><tr><th>Animal</th><th>Farmer note</th><th>Urgency / preference</th><th>Status</th><th>Action</th></tr></thead><tbody>{contactRequests.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name || "Farm-wide"}</strong><small className="cell-sub">{item.animal_tag || item.farm_id}</small></td><td>{item.message || "No note added"}<small className="cell-sub">From {item.requester_name}</small></td><td><StatusPill tone={item.urgency === "emergency" ? "red" : item.urgency === "urgent" ? "amber" : "neutral"}>{item.urgency}</StatusPill><small className="cell-sub">Prefers {item.preferred_contact_method.replaceAll("_", " ")}</small></td><td><StatusPill tone={item.status === "accepted" || item.status === "contacted" ? "green" : item.status === "declined" ? "red" : "amber"}>{item.status}</StatusPill></td><td><div className="review-actions">{item.status === "pending" ? <><button type="button" className="button button-primary button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "accepted")}>Accept</button><button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "declined")}>Decline</button></> : item.status === "accepted" && item.veterinarian_user_id ? <button type="button" className="button button-outline button-small" disabled={contactBusy} onClick={() => void updateContactRequest(item.id, "contacted")}>Mark contacted</button> : null}</div></td></tr>)}</tbody></table></div> : <Empty title="No farmer contact requests" detail="New requests for this farm will appear here." />}</section> : null}
     {role === "veterinarian" ? <section className="card"><PanelTitle eyebrow="VETERINARY REVIEW QUEUE" title={`${cases.length} open cases`} description="Review farmer-submitted events, verify the record you assessed, and record what happened at follow-up." />{cases.length ? <div className="table-scroll"><table><thead><tr><th>Animal / farm</th><th>Clinical event</th><th>Follow-up date</th><th>Verification</th><th></th></tr></thead><tbody>{cases.map((item: AnyRecord) => <tr key={item.id}><td><strong>{item.animal_name} · {item.animal_tag}</strong><small className="cell-sub">{item.farm_name}</small></td><td>{item.summary}<small className="cell-sub">Occurred {item.occurred_on}</small></td><td>{item.follow_up_on || "Not recorded"}</td><td><StatusPill tone={item.verified ? "green" : "amber"}>{item.verified ? "Verified" : "Needs review"}</StatusPill></td><td><div className="review-actions"><button className="button button-outline button-small" onClick={() => setSelectedEventId(item.id)}>Open case</button>{item.verified ? null : <button className="button button-outline button-small" disabled={busy} onClick={() => void verify(item.id)}>Verify</button>}</div></td></tr>)}</tbody></table></div> : <Empty title="No open clinical cases" detail="New health events for assigned farms will appear in your queue." />}</section> : null}
+
+    {contactRequests.length ? <section className="card conversation-launcher"><PanelTitle eyebrow="FARMER–VETERINARIAN MESSAGES" title="Continue a contact request" description="Use the authenticated Terravanta inbox to coordinate a response. WhatsApp is not connected yet." /><label className="field"><span>Contact request</span><select value={conversationRequestId} onChange={(event) => setConversationRequestId(event.target.value)}><option value="">Choose a request…</option>{contactRequests.map((item: AnyRecord) => <option key={item.id} value={item.id}>{item.animal_name || "Farm-wide"} · {item.status} · {new Date(item.created_at).toLocaleDateString("en-KE")}</option>)}</select></label>{activeContactRequest ? <VetContactConversation request={activeContactRequest} token={token} role={role} onClose={() => setConversationRequestId("")} /> : <small className="muted">Messages remain tied to the request and its farm access rules.</small>}</section> : null}
 
     <section className="card">
       <PanelTitle eyebrow="CASE OUTCOMES" title="Follow-up register" description="A scheduled date is a reminder. Each actual visit or missed contact is recorded separately and attributed to the veterinarian." action={historyLoading ? <LoaderCircle className="spinner" size={17} /> : null} />

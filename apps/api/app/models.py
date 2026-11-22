@@ -330,6 +330,26 @@ class VeterinaryContactRequest(Base):
     )
 
 
+class VeterinaryContactMessage(Base):
+    """Immutable conversation entry attached to a farmer-veterinarian request."""
+    __tablename__ = "veterinary_contact_messages"
+    id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)
+    request_id: Mapped[object] = mapped_column(Uuid, ForeignKey("veterinary_contact_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    farm_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farms.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_id: Mapped[object] = mapped_column(Uuid, ForeignKey("farm_domain_events.id", ondelete="RESTRICT"), nullable=False)
+    sender_user_id: Mapped[object] = mapped_column(Uuid, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    source_channel: Mapped[str] = mapped_column(String(20), default="in_app", nullable=False)
+    external_message_id: Mapped[str | None] = mapped_column(String(180), nullable=True, unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, nullable=False)
+    __table_args__ = (
+        CheckConstraint("length(trim(body)) BETWEEN 1 AND 4000", name="ck_vet_contact_message_body"),
+        CheckConstraint("source_channel IN ('in_app', 'whatsapp')", name="ck_vet_contact_message_channel"),
+        Index("ix_vet_contact_messages_request_created", "request_id", "created_at"),
+    )
+
+
 class ClinicalObservation(Base):
     __tablename__ = "clinical_observations"
     id: Mapped[object] = mapped_column(Uuid, primary_key=True, default=uid)

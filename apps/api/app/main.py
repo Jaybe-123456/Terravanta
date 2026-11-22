@@ -30,14 +30,15 @@ from .models import (
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
     FeedBatch, KnowledgeSource, ManureRecord, Organization, OrganizationMember, Plot, SupabaseIdentityLink,
     ProductLot, ProductionRecord, ReconciliationItem, ReconciliationRun, SettlementClose, SettlementCloseItem, User, UserRole,
-    VeterinaryContactRequest, FarmDomainEvent, Notification,
+    VeterinaryContactRequest, VeterinaryContactMessage, FarmDomainEvent, Notification,
 )
 from .schemas import (
     AnimalCreate, AssistantRequest, CompostApplicationCreate, CompostCreate, ConsentCreate,
     DeliveryCreate, FarmCreate, FeedAllocationCreate, FeedBatchCreate, HealthEventCreate,
     HealthFollowUpCreate, ExtractedDocumentDraft, ManureCreate, PlotCreate, ProductionCreate, ReconciliationReviewCreate,
     SettlementApproveCreate, SettlementReviewCreate,
-    TerrasRouteRequest, VeterinaryContactRequestCreate, VeterinaryContactRequestUpdate, FarmAssistantRequest,
+    TerrasRouteRequest, VeterinaryContactRequestCreate, VeterinaryContactRequestUpdate,
+    VeterinaryContactMessageCreate, FarmAssistantRequest,
 )
 from .reconciliation import MAX_RECONCILIATION_ROWS, classify_collection_entry, parse_collection_csv
 from .settlement import parse_settlement_sources
@@ -612,6 +613,119 @@ def update_vet_contact_request(
     db.commit()
     db.refresh(row)
     return serialize_vet_contact_request(db, row)
+
+
+def serialize_vet_contact_message(db: Session, row: VeterinaryContactMessage, user: User) -> dict:
+    sender = db.get(User, row.sender_user_id)
+    return {
+        "id": str(row.id),
+        "request_id": str(row.request_id),
+        "sender_user_id": str(row.sender_user_id),
+        "sender_name": sender.display_name if sender else "Farm member",
+        "is_mine": row.sender_user_id == user.id,
+        "body": row.body,
+        "channel": row.source_channel,
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+def contact_request_for_conversation(db: Session, user: User, request_id: UUID) -> VeterinaryContactRequest:
+    row = db.query(VeterinaryContactRequest).filter_by(id=request_id).first()
+    if not row:
+        raise HTTPException(404, "Veterinary contact request not found")
+    membership = db.query(FarmMember).filter_by(farm_id=row.farm_id, user_id=user.id).first()
+    if not membership:
+        raise HTTPException(404, "Veterinary contact request not found")
+    if row.requester_user_id != user.id:
+        if membership.role != "veterinarian":
+            raise HTTPException(404, "Veterinary contact request not found")
+        if row.status != "pending" and row.veterinarian_user_id != user.id:
+            raise HTTPException(404, "Veterinary contact request not found")
+    return row
+
+
+@app.get("/api/v1/veterinary-contact-requests/{request_id}/messages")
+def list_vet_contact_messages(
+    request_id: UUID,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_scoped_db),
+):
+    row = contact_request_for_conversation(db, user, request_id)
+    messages = db.query(VeterinaryContactMessage).filter_by(
+        request_id=row.id, farm_id=row.farm_id,
+    ).order_by(VeterinaryContactMessage.created_at.asc()).limit(200).all()
+    return {"items": [serialize_vet_contact_message(db, item, user) for item in messages]}
+
+
+@app.post("/api/v1/veterinary-contact-requests/{request_id}/messages", status_code=201)
+def create_vet_contact_message(
+    request_id: UUID,
+    body: VeterinaryContactMessageCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_scoped_db),
+):
+    row = contact_request_for_conversation(db, user, request_id)
+    membership = db.query(FarmMember).filter_by(farm_id=row.farm_id, user_id=user.id).first()
+    if row.status not in {"pending", "accepted", "contacted"}:
+        raise HTTPException(409, "This request is closed; no further messages can be added")
+    if row.requester_user_id == user.id:
+        require_role(db, user, "farmer")
+        recipients = (
+            [row.veterinarian_user_id]
+            if row.veterinarian_user_id else [
+                item.user_id for item in db.query(FarmMember).filter_by(farm_id=row.farm_id, role="veterinarian").all()
+            ]
+        )
+    else:
+        require_role(db, user, "veterinarian")
+        if membership.role != "veterinarian" or row.veterinarian_user_id != user.id or row.status not in {"accepted", "contacted"}:
+            raise HTTPException(403, "Accept this request before messaging the farmer")
+        recipients = [row.requester_user_id]
+
+    idempotency_key = f"vet-contact-message:{row.id}:{user.id}:{body.client_message_id}"
+    existing = db.query(VeterinaryContactMessage).filter_by(idempotency_key=idempotency_key).first()
+    if existing:
+        return serialize_vet_contact_message(db, existing, user)
+
+    source_event = append_domain_event(
+        db,
+        farm_id=row.farm_id,
+        actor=user,
+        event_type="veterinary.contact_message_sent",
+        aggregate_type="veterinary_contact_request",
+        aggregate_id=row.id,
+        idempotency_key=f"{idempotency_key}:event",
+        payload={"channel": "in_app", "client_message_id": str(body.client_message_id)},
+    )
+    message = VeterinaryContactMessage(
+        request_id=row.id,
+        farm_id=row.farm_id,
+        event_id=source_event.id,
+        sender_user_id=user.id,
+        body=body.body,
+        source_channel="in_app",
+        idempotency_key=idempotency_key,
+    )
+    db.add(message)
+    db.flush()
+    for recipient_id in set(recipients):
+        if recipient_id is None or recipient_id == user.id:
+            continue
+        db.add(Notification(
+            farm_id=row.farm_id,
+            event_id=source_event.id,
+            recipient_user_id=recipient_id,
+            notification_type="veterinary_contact_message",
+            title="New message about a veterinary request",
+            body="Open Veterinary in Terravanta to read and reply to the request.",
+            severity="high" if row.urgency == "emergency" else "medium",
+            action_section="veterinary",
+            idempotency_key=f"{idempotency_key}:notification:{recipient_id}",
+        ))
+    audit(db, user, "veterinary.contact_message_sent", "veterinary_contact_message", str(message.id), row.farm_id, {"request_id": str(row.id), "channel": "in_app"})
+    db.commit()
+    db.refresh(message)
+    return serialize_vet_contact_message(db, message, user)
 
 
 @app.get("/api/v1/health-events/{event_id}/follow-ups")

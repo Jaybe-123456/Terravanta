@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class FarmCreate(BaseModel):
@@ -236,6 +236,19 @@ class VeterinaryContactRequestCreate(BaseModel):
 
 class VeterinaryContactRequestUpdate(BaseModel):
     status: Literal["accepted", "declined", "contacted", "cancelled"]
+
+
+class VeterinaryContactMessageCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    client_message_id: UUID
+
+    @field_validator("body")
+    @classmethod
+    def trim_message(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Message cannot be blank")
+        return value
 
 
 class FarmAssistantRequest(BaseModel):

@@ -16,9 +16,11 @@ Farmers can submit an in-app contact request linked to their farm and optionally
 
 `preferred_contact_method` is captured as a preference (`phone_call`, `whatsapp`, or `in_app`). It does not initiate a call or send a WhatsApp message. Requests require at least one veterinarian to be assigned to the farm; there is no automatic public vet directory or dispatch service. The interface tells users to contact local veterinary help directly for an emergency.
 
+Each contact request also has an authenticated, farm-scoped conversation thread. Messages are immutable, attributed to their sender, deduplicated by client message ID, represented as farm-domain events, and notify the other participant in the in-app inbox. Only the requesting farmer and the assigned veterinarian can continue a non-pending thread; a farm veterinarian can inspect a pending request before accepting it. These messages coordinate contact and are not verified clinical records. The API and database enforce the same access boundary. The thread model includes a channel and provider-message reference for future channel mapping, but application messages are currently `in_app` only.
+
 ## WhatsApp integration boundary
 
-Terravanta does not yet connect to WhatsApp. No Meta credentials, business phone number, verified user phone numbers, pairing flow, webhook, or outbound message provider are configured. A saved WhatsApp preference is not evidence that a message was delivered.
+Terravanta does not yet connect to WhatsApp. No Meta credentials, business phone number, verified user phone numbers, pairing flow, webhook, delivery outbox, or outbound message provider are configured. A saved WhatsApp preference is not evidence that a message was delivered.
 
 The proposed first provider is the official WhatsApp Business Platform Cloud API. Meta documents its message endpoint as `/{WHATSAPP_BUSINESS_PHONE_NUMBER_ID}/messages`, and webhook event notifications include a SHA-256 signature in `X-Hub-Signature-256`; webhook signatures should be verified before processing payloads. See the [WhatsApp Business Platform overview](https://developers.facebook.com/documentation/business-messaging/whatsapp/overview) and [Meta webhook validation guidance](https://developers.facebook.com/docs/graph-api/webhooks/getting-started/).
 
@@ -46,8 +48,8 @@ Do not add these values to the frontend environment or commit them. No values ar
 
 ## Next engineering sequence
 
-1. Add user phone pairing, consent and revocation with audit history.
-2. Add the signed webhook endpoint, raw-body signature validation, inbound deduplication and a restricted channel command router.
-3. Add an outbound WhatsApp delivery outbox for contact requests and reminders, initially with status-only notices and no private clinical details.
+1. Add phone pairing through an expiring one-time challenge, then explicit WhatsApp consent, revocation and audit history. Do not accept user-submitted numbers as verified.
+2. Add a durable channel outbox with opt-in checks, retry/backoff, provider message IDs, delivery callbacks, failure visibility and idempotency; keep WhatsApp disabled until pairing, consent and Meta credentials are complete.
+3. Add the signed webhook endpoint, raw-body signature validation, inbound deduplication and a restricted channel command router that maps only verified numbers to existing users and farm roles.
 4. Add confirmation cards/replies for Terras proposals and enforce the same API authorization as the web application.
 5. Pilot with farmers and assigned veterinarians and measure contact-request acknowledgement time, completion rate and no-response rate before automating further.
