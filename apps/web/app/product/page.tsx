@@ -78,6 +78,6 @@ export default function ProductPage() {
       <div className="product-boundary-copy"><p>Terravanta records a cooperative’s claim and the evidence behind it. It does not independently certify a legal debt, move money, guarantee settlement, originate credit or replace legal advice.</p><p>The current workflow starts with files and information authorized by the cooperative. No live processor MIS, bank, mobile-money or cooperative ERP connector is claimed. Any sharing with a lender requires a separate, explicit mandate.</p></div>
     </section>
 
-    <footer className="product-footer"><a className="product-brand" href="/"><span className="product-brand-mark">T</span><span>terravanta<small>FARM INTELLIGENCE</small></span></a><span>Private records require an authenticated, authorized account.</span><a href="/">Open the sign-in page <span aria-hidden="true">→</span></a></footer>
+    <footer className="product-footer"><a className="product-brand" href="/"><span className="product-brand-mark">T</span><span>terravanta<small>FARM INTELLIGENCE</small></span></a><span>Private records require an authenticated, authorized account.</span><nav className="product-legal-links" aria-label="Legal pages"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/data-deletion">Data deletion</a></nav><a href="/">Open the sign-in page <span aria-hidden="true">→</span></a></footer>
   </main>;
 }

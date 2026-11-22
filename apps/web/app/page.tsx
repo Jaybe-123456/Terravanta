@@ -597,6 +597,7 @@ function SignInScreen({ demoMode, checkingSession, passwordRecovery, busy, error
       </>}
       <small className="auth-footnote">Supabase manages sign-in, email confirmation, password recovery and sessions. New sign-ups start with farmer access; veterinarian, cooperative and processor workspaces require an assigned organization or farm role.</small>
       <a className="auth-product-link" href="/product">Explore Terravanta’s workflows and product overview <ArrowRight size={13} /></a>
+      <nav className="auth-legal-links" aria-label="Legal pages"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/data-deletion">Data deletion</a></nav>
     </>}</section><p className="auth-bottom">Farm-level data access is checked by the Terravanta API and PostgreSQL policies.</p></main>;
 }
 
