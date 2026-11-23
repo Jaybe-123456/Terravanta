@@ -10,7 +10,7 @@ Set these on the **Render API service**. The browser calls the Terravanta API; i
 | --- | --- |
 | `NVIDIA_API_KEY` | A current NVIDIA API key with access to the chosen model |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` for NVIDIA hosted inference |
-| `NVIDIA_CHAT_MODEL` | `stg/nvidia/nemotron-3.5-bolt-e4b`, or a currently available chat model for the key |
+| `NVIDIA_CHAT_MODEL` | `nvidia/nemotron-3.5-bolt-e4b`, or a currently available chat model for the key |
 | `AI_TIMEOUT_SECONDS` | `35` |
 
 This enables the consent-gated farm and veterinary draft routes. Each request still needs the user's external-processing consent, and a person reviews the draft. Setting these variables proves configuration only; it does not establish successful authentication, quota, or a live response. After redeploying the API, use the provider status panel and make one consented, non-sensitive test request.

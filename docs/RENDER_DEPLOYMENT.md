@@ -114,7 +114,7 @@ For farm and veterinary review drafts, set these on the Render API service only:
 | --- | --- |
 | `NVIDIA_API_KEY` | Server-side NVIDIA API key; keep it in Render's secret environment field |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` unless using another compatible endpoint |
-| `NVIDIA_CHAT_MODEL` | `stg/nvidia/nemotron-3.5-bolt-e4b` or a currently available chat model verified for this key |
+| `NVIDIA_CHAT_MODEL` | `nvidia/nemotron-3.5-bolt-e4b` or a currently available chat model verified for this key |
 | `AI_TIMEOUT_SECONDS` | `35` |
 
 This enables only opt-in review drafts. The farmer/veterinary user must still check the external-processing consent box for each request. Review provider retention and data-processing terms before sending real farm data. A configured key is not proof of connectivity, account quota, or successful output.
@@ -127,7 +127,7 @@ Image document parsing is a separate optional integration using NVIDIA's hosted 
 | `NVIDIA_PARSE_API_KEY` | Optional separate bearer key; if blank, `NVIDIA_API_KEY` is used |
 | `NVIDIA_PARSE_MODEL` | `nvidia/nemotron-3.5-parse` |
 
-The Parse API accepts one consented PNG or JPEG page using multipart field `document`. Images are sent only after per-upload consent. Structured field mapping also uses `NVIDIA_API_KEY`; extracted fields remain drafts for human review. Selectable-text PDF extraction stays local. The authenticated AI provider-status panel reports configuration presence only; it deliberately does not send a test request or expose keys, URLs, or connectivity claims. NVIDIA documents `stg/nvidia/nemotron-3.5-bolt-e4b` for standalone chat gateway requests and a separate hosted endpoint for `nvidia/nemotron-3.5-parse`; verify model availability and trial terms in the NVIDIA account before relying on it.
+The Parse API accepts one consented PNG or JPEG page using multipart field `document`. Images are sent only after per-upload consent. Structured field mapping also uses `NVIDIA_API_KEY`; extracted fields remain drafts for human review. Selectable-text PDF extraction stays local. The authenticated AI provider-status panel reports configuration presence only; it deliberately does not send a test request or expose keys, URLs, or connectivity claims. NVIDIA documents the Nemotron 3.5 Bolt E4B chat model and the separate hosted Parse endpoint. In a minimal live request, `nvidia/nemotron-3.5-bolt-e4b` returned a response for the supplied account while the `stg/` alias returned 404; use the canonical model ID and verify availability and trial terms in the NVIDIA account.
 
 WhatsApp settings are not part of this setup. Keep the existing WhatsApp environment values and Meta settings unchanged while bootstrapping the public domain and Meta business profile.
 

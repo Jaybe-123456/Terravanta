@@ -27,7 +27,7 @@
 
 The API now exposes authenticated `GET /api/v1/ai/provider-status`. It reports only whether required settings are present and the configured model identifiers; it does not return secrets or endpoint URLs and does not perform a connectivity test. Use the AI provider-status panel to distinguish configured from not configured. The deployment checklist is in [`RENDER_DEPLOYMENT.md`](RENDER_DEPLOYMENT.md#optional-nvidia-ai-providers).
 
-No NVIDIA key or Parse service URL was supplied in this work session. Therefore this change prepares provider operations and in-app readiness reporting; it does not activate an external provider. Add secret values only to the Render API service, never Vercel. Verify connectivity with an explicit, synthetic-data request before enabling real farm information.
+A one-time minimal request confirmed that the supplied NVIDIA key can authenticate and that `nvidia/nemotron-3.5-bolt-e4b` returns a response; the `stg/` alias returned 404 for that account. The key was used only for this check and was not saved in source control or Render. Rotate it because it was exposed in chat, then add the replacement only to the Render API service, never Vercel. Production AI remains unconfigured until that rotated key is set; verify connectivity with synthetic data before enabling real farm information.
 
 ## Remaining production work, in order
 

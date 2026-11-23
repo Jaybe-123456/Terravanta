@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nvidia_chat_model: str = "stg/nvidia/nemotron-3.5-bolt-e4b"
+    nvidia_chat_model: str = "nvidia/nemotron-3.5-bolt-e4b"
     nvidia_parse_model: str = "nvidia/nemotron-3.5-parse"
     nvidia_parse_url: str = "https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-parse/parse"
     nvidia_parse_api_key: str = ""
