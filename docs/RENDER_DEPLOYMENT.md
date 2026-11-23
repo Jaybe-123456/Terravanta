@@ -104,6 +104,33 @@ Set these Vercel Production variables, then redeploy:
 
 The API accepts the stable production origin. Add another origin to Render only when it is intentionally trusted to access production farm data. Never expose a service-role key to the browser.
 
+## Optional NVIDIA AI providers
+
+AI is an optional API-side capability; regular farm records, follow-up workflows, deterministic Terras routing, settlement operations and local selectable-text PDF extraction do not require NVIDIA. Do not add provider keys to Vercel or the browser. Until an API key is configured, farm and veterinary review requests return an explicit unconfigured result; ordinary records remain available.
+
+For farm and veterinary review drafts, set these on the Render API service only:
+
+| Variable | Value |
+| --- | --- |
+| `NVIDIA_API_KEY` | Server-side NVIDIA API key; keep it in Render's secret environment field |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` unless using another compatible endpoint |
+| `NVIDIA_CHAT_MODEL` | `stg/nvidia/nemotron-3.5-bolt-e4b` or a currently available chat model verified for this key |
+| `AI_TIMEOUT_SECONDS` | `35` |
+
+This enables only opt-in review drafts. The farmer/veterinary user must still check the external-processing consent box for each request. Review provider retention and data-processing terms before sending real farm data. A configured key is not proof of connectivity, account quota, or successful output.
+
+Image document parsing is a separate optional integration using NVIDIA's hosted Nemotron Parse API:
+
+| Variable | Value |
+| --- | --- |
+| `NVIDIA_PARSE_URL` | Optional override; default endpoint is `https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-parse/parse` |
+| `NVIDIA_PARSE_API_KEY` | Optional separate bearer key; if blank, `NVIDIA_API_KEY` is used |
+| `NVIDIA_PARSE_MODEL` | `nvidia/nemotron-3.5-parse` |
+
+The Parse API accepts one consented PNG or JPEG page using multipart field `document`. Images are sent only after per-upload consent. Structured field mapping also uses `NVIDIA_API_KEY`; extracted fields remain drafts for human review. Selectable-text PDF extraction stays local. The authenticated AI provider-status panel reports configuration presence only; it deliberately does not send a test request or expose keys, URLs, or connectivity claims. NVIDIA documents `stg/nvidia/nemotron-3.5-bolt-e4b` for standalone chat gateway requests and a separate hosted endpoint for `nvidia/nemotron-3.5-parse`; verify model availability and trial terms in the NVIDIA account before relying on it.
+
+WhatsApp settings are not part of this setup. Keep the existing WhatsApp environment values and Meta settings unchanged while bootstrapping the public domain and Meta business profile.
+
 ## Optional WhatsApp channel
 
 Migration `0013_whatsapp_delivery_safety` creates the non-login `terravanta_worker` group role and grants it the cross-user queue claim/finish functions. Do not grant this group role to the API runtime login. After the migration succeeds, create a dedicated login for the background worker:

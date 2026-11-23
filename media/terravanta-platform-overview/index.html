@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Terravanta · Farm and veterinary workflows</title>
+    <script src="./assets/gsap.min.js"></script>
+    <style>
+      html, body { width: 1920px; height: 1080px; margin: 0; overflow: hidden; background: #f2f5f1; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="terravanta-platform-overview" data-start="0" data-duration="52" data-width="1920" data-height="1080" data-fps="30">
+      <div id="platform-stack" class="clip" data-composition-id="platform-stack" data-composition-src="compositions/00-integration-stack.html" data-start="0" data-duration="8" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-farm" class="clip" data-composition-id="platform-farm" data-composition-src="compositions/01-farm-records.html" data-start="8" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-production" class="clip" data-composition-id="platform-production" data-composition-src="compositions/02-production.html" data-start="14" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-veterinary" class="clip" data-composition-id="platform-veterinary" data-composition-src="compositions/03-veterinary.html" data-start="20" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-whatsapp" class="clip" data-composition-id="platform-whatsapp" data-composition-src="compositions/04-whatsapp.html" data-start="26" data-duration="8" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-close" class="clip" data-composition-id="platform-close" data-composition-src="compositions/05-close.html" data-start="34" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-claim" class="clip" data-composition-id="platform-claim" data-composition-src="compositions/06-claim.html" data-start="40" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+      <div id="platform-ai" class="clip" data-composition-id="platform-ai" data-composition-src="compositions/07-ai-and-review.html" data-start="46" data-duration="6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080" data-hold></div>
+    </div>
+    <audio id="terravanta-music" src="./assets/music/terravanta-platform-bed.mp3" data-composition-id="terravanta-music" data-start="0" data-duration="52" data-track-index="1" data-track-kind="audio" data-volume="0.12" data-fade-in="1.5" data-fade-out="3"></audio>
+    <!-- Generated with ElevenLabs Music v2.5 through the hosted OAuth MCP; 52-second instrumental bed. -->
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["terravanta-platform-overview"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

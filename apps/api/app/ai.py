@@ -39,15 +39,16 @@ class NVIDIAProvider:
         raise last_error or RuntimeError("NVIDIA request failed")
 
     async def parse_image(self, path: str, mime_type: str) -> tuple[str, int]:
-        """Call the native Nemotron Parse NIM contract: multipart POST /v1/parse."""
+        """Call NVIDIA's hosted Nemotron Parse API with one consented page image."""
         if not settings.nvidia_parse_url:
             raise RuntimeError("NVIDIA_PARSE_URL is not configured")
         if mime_type not in {"image/png", "image/jpeg"}:
             raise ValueError("Nemotron Parse accepts PNG or JPEG page images")
         started = time.perf_counter()
         headers = {"Accept": "application/json"}
-        if settings.nvidia_parse_api_key:
-            headers["Authorization"] = f"Bearer {settings.nvidia_parse_api_key}"
+        parse_key = settings.nvidia_parse_api_key.strip() or settings.nvidia_api_key.strip()
+        if parse_key:
+            headers["Authorization"] = f"Bearer {parse_key}"
         last_error: Exception | None = None
         for attempt in range(3):
             try:

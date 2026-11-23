@@ -89,8 +89,8 @@ Before onboarding multiple organizations, measure connector setup, evidence-revi
 
 ## NVIDIA use in the wedge
 
-- The veterinary assistant is a backend-only, opt-in draft feature. It uses the configurable NVIDIA Build chat endpoint and defaults to the exact model ID `nvidia/nemotron-3.5-lightning-30b-a3b`. Availability, terms, rate limits, data handling and language coverage must be rechecked in the account before launch. [NVIDIA Build model card](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/modelcard)
-- Selectable PDF text is extracted locally. The image path is an adapter for the native Nemotron Parse NIM `/v1/parse` multipart contract, configured by `NVIDIA_PARSE_URL`; it is **not a fabricated NVIDIA Build hosted endpoint**. The parsed text can be mapped to a structured draft by the chat model. Every extracted value stays pending human review. [Nemotron Parse API reference](https://docs.api.nvidia.com/nim/reference/nvidia-nemotron-3_5-parse-infer)
+- The veterinary assistant is a backend-only, opt-in draft feature. It uses the configurable NVIDIA Build chat endpoint and defaults to the standalone gateway alias `stg/nvidia/nemotron-3.5-bolt-e4b`. Availability, terms, rate limits, data handling and language coverage must be rechecked in the account before launch. [NVIDIA Bolt API reference](https://build.nvidia.com/nvidia/nemotron-3.5-bolt-e4b/apireference)
+- Selectable PDF text is extracted locally. The image path uses NVIDIA's hosted Nemotron Parse API; the parsed text can be mapped to a structured draft by the chat model. Every extracted value stays in human review. [Nemotron Parse API reference](https://build.nvidia.com/nvidia/nemotron-3.5-parse/apireference)
 - Forecasts and anomaly alerts use explainable record rules and statistical baselines first. Kumo, voice, image-based clinical interpretation and the named blueprints are not required for this launch wedge. Add them only with sufficient data, verified language support, and a clear user benefit.
 
 ## Decision rule

@@ -1729,6 +1729,32 @@ def external_farm_summary(facts: dict) -> dict:
     }
 
 
+@app.get("/api/v1/ai/provider-status")
+def ai_provider_status(user: User = Depends(current_user)):
+    """Report server-side provider configuration without revealing credentials or endpoints."""
+    chat_configured = bool(settings.nvidia_api_key.strip() and settings.nvidia_base_url.strip() and settings.nvidia_chat_model.strip())
+    parse_configured = bool(settings.nvidia_parse_url.strip() and (settings.nvidia_parse_api_key.strip() or settings.nvidia_api_key.strip()))
+    return {
+        "chat": {
+            "provider": "NVIDIA NIM",
+            "configured": chat_configured,
+            "model": settings.nvidia_chat_model,
+        },
+        "image_parse": {
+            "provider": "Nemotron Parse",
+            "configured": parse_configured,
+            "model": settings.nvidia_parse_model,
+            "requires": ["NVIDIA_API_KEY"],
+        },
+        "structured_document_fields": {
+            "configured": parse_configured and bool(settings.nvidia_api_key.strip()),
+            "requires": ["NVIDIA_API_KEY"],
+        },
+        "selectable_pdf_text": {"configured": True, "provider": "local extraction"},
+        "connectivity_checked": False,
+    }
+
+
 @app.post("/api/v1/farms/{farm_id}/ai-assistant")
 async def farm_assistant(farm_id: UUID, body: FarmAssistantRequest, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)

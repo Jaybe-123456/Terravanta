@@ -63,9 +63,9 @@ Authenticated request
   → draft answer, citations, outcome/latency log and audit event
 ```
 
-The chat adapter uses NVIDIA's OpenAI-compatible endpoint with configurable model ID `nvidia/nemotron-3.5-lightning-30b-a3b`. The API key stays on the backend. If the key is absent or the provider fails, ordinary record operations continue and the assistant returns a clear no-answer state. The selected Build model card does not list Swahili support; no language-specific AI capability is promised.
+The chat adapter uses NVIDIA's OpenAI-compatible endpoint with configurable model ID `stg/nvidia/nemotron-3.5-bolt-e4b` (NVIDIA's standalone gateway alias). The API key stays on the backend. If the key is absent or the provider fails, ordinary record operations continue and the assistant returns a clear no-answer state. Confirm the model and account availability in NVIDIA before live use; no language-specific AI capability is promised.
 
-Selectable PDF text is extracted locally. The image parser uses the native Nemotron Parse NIM contract (multipart `POST /v1/parse`) at an explicitly configured `NVIDIA_PARSE_URL`; it is not silently represented as a hosted Build API. When enabled, the parsed content may go to the configured chat model for structured field extraction. Every extraction stays in `pending_review` until a person checks it; review does not write the values into official records. NVIDIA endpoints, trial terms and data retention must be checked against the deployment account before transmitting real records.
+Selectable PDF text is extracted locally. The image parser uses NVIDIA's hosted Nemotron Parse endpoint (`POST https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-parse/parse`) with multipart field `document` and the backend-held bearer key. When enabled, parsed content may go to the configured chat model for structured field extraction. Every extraction stays in `pending_review` until a person checks it; review does not write the values into official records. NVIDIA trial terms and data retention must be checked against the deployment account before transmitting real records.
 
 ## Data model and migration strategy
 
