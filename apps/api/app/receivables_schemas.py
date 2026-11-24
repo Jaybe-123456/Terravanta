@@ -114,6 +114,29 @@ class CounterpartyResponseCreate(BaseModel):
         return self
 
 
+class CounterpartyLineReviewCreate(BaseModel):
+    review_status: Literal["matched", "value_differs", "missing_from_processor_record"]
+    processor_amount: Decimal | None = Field(default=None, ge=0, max_digits=16, decimal_places=2)
+    processor_direction: Literal["increase", "decrease", "informational"] | None = None
+    processor_reference: str = Field(default="", max_length=160)
+    source_locator: str = Field(default="", max_length=180)
+    review_note: str = Field(min_length=3, max_length=2000)
+    evidence_artifact_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def check_line_review(self):
+        self.processor_reference = self.processor_reference.strip()
+        self.source_locator = self.source_locator.strip()
+        self.review_note = self.review_note.strip()
+        if len(self.review_note) < 3:
+            raise ValueError("Explain the processor's line review")
+        if self.review_status == "missing_from_processor_record" and (self.processor_amount is not None or self.processor_direction is not None):
+            raise ValueError("A line missing from processor records must not include processor value or direction")
+        if self.review_status in {"matched", "value_differs"} and (self.processor_amount is None or self.processor_direction is None):
+            raise ValueError("Enter the processor-side amount and direction for this line review")
+        return self
+
+
 class ReceiptCreate(BaseModel):
     source_reference: str = Field(min_length=2, max_length=160)
     received_on: date
@@ -167,3 +190,66 @@ class PilotDecisionCreate(BaseModel):
         if not re.fullmatch(r"[A-Z]{3}", self.currency):
             raise ValueError("Currency must be a three-letter code")
         return self
+
+
+class SupplyContractReviewCreate(BaseModel):
+    decision: Literal["confirmed", "needs_changes"]
+    terms_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    note: str = Field(min_length=5, max_length=2000)
+
+    @model_validator(mode="after")
+    def normalize_note(self):
+        self.note = self.note.strip()
+        if len(self.note) < 5:
+            raise ValueError("Explain the contract review decision")
+        return self
+
+
+class SourceMappingProfileCreate(BaseModel):
+    source_system: str = Field(min_length=2, max_length=120)
+    record_type: Literal["receivable_lines"] = "receivable_lines"
+    schema_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    mapping_definition: dict
+
+    @model_validator(mode="after")
+    def validate_mapping(self):
+        self.source_system = self.source_system.strip()
+        if len(self.source_system) < 2:
+            raise ValueError("Name the source export")
+        definition = self.mapping_definition
+        if set(definition) - {"columns", "defaults"}:
+            raise ValueError("Mapping may contain only columns and defaults")
+        columns = definition.get("columns", {})
+        defaults = definition.get("defaults", {})
+        allowed = {"line_type", "direction", "amount", "source_reference", "occurred_on", "quantity", "unit"}
+        if not isinstance(columns, dict) or not isinstance(defaults, dict):
+            raise ValueError("Columns and defaults must be objects")
+        if set(columns) - allowed or set(defaults) - allowed:
+            raise ValueError("Mapping contains an unsupported receivable line field")
+        if any(not isinstance(header, str) or not header.strip() for header in columns.values()):
+            raise ValueError("Every mapped source column must have a name")
+        if any(not isinstance(value, str) for value in defaults.values()):
+            raise ValueError("Fixed defaults must be text values")
+        columns = {field: header.strip() for field, header in columns.items()}
+        defaults = {field: value.strip() if isinstance(value, str) else value for field, value in defaults.items()}
+        self.mapping_definition = {"columns": columns, "defaults": defaults}
+        if set(columns) & set(defaults):
+            raise ValueError("A field cannot use both a source column and a fixed default")
+        if "amount" not in columns:
+            raise ValueError("Map the source amount column")
+        if "line_type" not in columns and defaults.get("line_type") not in {
+            "accepted_supply", "quality_adjustment", "deduction", "credit_note", "other",
+        }:
+            raise ValueError("Map a line type column or choose a fixed line type")
+        if "direction" not in columns and defaults.get("direction") not in {"increase", "decrease", "informational"}:
+            raise ValueError("Map a direction column or choose a fixed direction")
+        return self
+
+
+class SourceImportPreviewCreate(BaseModel):
+    evidence_artifact_id: UUID
+
+
+class SourceImportApply(BaseModel):
+    evidence_artifact_id: UUID
+    mapping_profile_id: UUID

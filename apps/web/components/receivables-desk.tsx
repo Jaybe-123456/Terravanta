@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowDownToLine, CheckCircle2, Clock3, FileUp, Inbox, RefreshCw, Send, ShieldCheck, TimerReset } from "lucide-react";
 import { API_URL, api } from "@/lib/api";
+import { ReceivableSourceImport } from "@/components/receivable-source-import";
 
 type Row = Record<string, any>;
 
@@ -20,12 +21,23 @@ function durationHours(value: unknown) {
   return `${(hours / 24).toFixed(1)}d`;
 }
 
+function addCalendarDays(isoDate: string, days: number) {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  if (!year || !month || !day || !Number.isFinite(days)) return "";
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 function Label({ children }: { children: React.ReactNode }) { return <span className="receivable-label">{children}</span>; }
 
 export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: string; token: string; initialCaseId?: string }) {
   const processorMode = role === "processor_admin";
   const [cases, setCases] = useState<Row[]>([]);
   const [relationships, setRelationships] = useState<Row[]>([]);
+  const [contracts, setContracts] = useState<Row[]>([]);
+  const [intakeRelationshipId, setIntakeRelationshipId] = useState("");
+  const [intakeContractId, setIntakeContractId] = useState("");
+  const [intakeInvoiceDate, setIntakeInvoiceDate] = useState("");
+  const [intakeDueDate, setIntakeDueDate] = useState("");
   const [summary, setSummary] = useState<Row | null>(null);
   const [performance, setPerformance] = useState<Row | null>(null);
   const [performanceError, setPerformanceError] = useState("");
@@ -43,12 +55,16 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
     try {
       const list = await api<Row[]>(processorMode ? "/api/v1/processor/receivables/cases" : "/api/v1/cooperative/receivables/cases", token);
       setCases(list);
-      if (!processorMode) {
-        const [relationList, totals] = await Promise.all([
+      if (processorMode) {
+        setContracts(await api<Row[]>("/api/v1/processor/receivables/contracts", token));
+      } else {
+        const [relationList, totals, contractList] = await Promise.all([
           api<Row[]>("/api/v1/cooperative/receivables/relationships", token),
           api<Row>("/api/v1/cooperative/receivables/summary", token),
+          api<Row[]>("/api/v1/cooperative/receivables/contracts", token),
         ]);
         setRelationships(relationList); setSummary(totals);
+        setContracts(contractList);
         setPerformanceError("");
         try {
           setPerformance(await api<Row>(`/api/v1/cooperative/receivables/performance?window_days=${performanceWindow}`, token));
@@ -84,6 +100,48 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
     if (success) form.reset();
   }
 
+  async function createSupplyContract(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const relationshipId = String(values.get("relationship_id") || "");
+    if (!relationshipId) { setError("Select an active processor relationship."); return; }
+    const file = values.get("file");
+    if (!(file instanceof File) || !file.size) { setError("Choose the signed or issued contract PDF."); return; }
+    values.delete("relationship_id");
+    if (!values.get("effective_to")) values.delete("effective_to");
+    const success = await run(() => api(`/api/v1/cooperative/receivables/relationships/${relationshipId}/contracts`, token, {
+      method: "POST", body: values,
+    }), "Contract version saved. It remains a draft until the processor confirms this exact PDF.");
+    if (success) form.reset();
+  }
+
+  async function reviewSupplyContract(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    const success = await run(() => api(`/api/v1/processor/receivables/contracts/${values.contract_id}/review`, token, {
+      method: "POST", body: JSON.stringify({ decision: values.decision, terms_sha256: values.terms_sha256, note: values.note }),
+    }), values.decision === "confirmed" ? "The exact contract version is now counterparty-confirmed." : "Contract review request recorded; the cooperative must submit a new version after changes.");
+    if (success) form.reset();
+  }
+
+  async function downloadContractTerms(contractId: string, filename: string) {
+    await run(async () => {
+      const response = await fetch(`${API_URL}/api/v1/receivables/contracts/${contractId}/terms`, {
+        cache: "no-store", signal: AbortSignal.timeout(20000), headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({ detail: "Contract PDF download failed" }));
+        throw new Error(`${detail.detail || "Contract PDF download failed"} (HTTP ${response.status})`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = filename; anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, "Contract source PDF downloaded.");
+  }
+
   async function createCase(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -94,7 +152,8 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
       source_reference: values.source_reference,
       period_start: values.period_start || null, period_end: values.period_end || null,
       invoice_date: values.invoice_date || null, due_date: values.due_date || null,
-      due_date_basis: values.due_date ? values.due_date_basis : "unknown",
+      due_date_basis: values.due_date ? (values.contract_id ? "contract" : "manual_review") : "unknown",
+      contract_id: values.contract_id || null,
       currency: values.currency, asserted_amount: values.asserted_amount,
       description: values.description || "",
       lines: claimLines.map((line) => ({ ...line, occurred_on: line.occurred_on || null, amount: String(line.amount) })),
@@ -104,7 +163,7 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
       setSelectedId(created.id);
       setSelected(created);
     }, "Claim draft created. Attach the source documents before asserting and submitting it.");
-    if (success) { form.reset(); setClaimLines([]); }
+    if (success) { form.reset(); setClaimLines([]); setIntakeRelationshipId(""); setIntakeContractId(""); setIntakeInvoiceDate(""); setIntakeDueDate(""); }
   }
 
   async function uploadEvidence(event: React.FormEvent<HTMLFormElement>) {
@@ -121,6 +180,41 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
       await api(`/api/v1/cooperative/receivables/cases/${selected.id}/evidence`, token, { method: "POST", body: upload });
     }, "Private evidence attached to the claim.");
     if (success) formElement.reset();
+  }
+
+  async function uploadProcessorEvidence(event: React.FormEvent<HTMLFormElement>, caseId: string) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const values = new FormData(formElement);
+    const file = values.get("file");
+    if (!(file instanceof File) || !file.size) { setError("Choose the processor source PDF or CSV first."); return; }
+    const upload = new FormData(); upload.append("file", file);
+    upload.append("artifact_type", String(values.get("artifact_type") || "processor_statement"));
+    upload.append("source_reference", String(values.get("source_reference") || ""));
+    upload.append("source_locator", String(values.get("source_locator") || ""));
+    const success = await run(() => api(`/api/v1/processor/receivables/cases/${caseId}/evidence`, token, {
+      method: "POST", body: upload,
+    }), "Processor evidence is attached to this claim and visible to both parties.");
+    if (success) formElement.reset();
+  }
+
+  async function reviewProcessorLine(event: React.FormEvent<HTMLFormElement>, caseId: string, lineId: string) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    const body = {
+      review_status: values.review_status,
+      processor_amount: values.review_status === "missing_from_processor_record" ? null : values.processor_amount || null,
+      processor_direction: values.review_status === "missing_from_processor_record" ? null : values.processor_direction,
+      processor_reference: values.processor_reference || "",
+      source_locator: values.source_locator || "",
+      review_note: values.review_note,
+      evidence_artifact_id: values.evidence_artifact_id || null,
+    };
+    const success = await run(() => api(`/api/v1/processor/receivables/cases/${caseId}/lines/${lineId}/review`, token, {
+      method: "POST", body: JSON.stringify(body),
+    }), "Processor line review added to the claim history; prior reviews remain preserved.");
+    if (success) form.reset();
   }
 
   async function download(path: string, filename: string) {
@@ -190,6 +284,24 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
     </div>
     {error ? <div role="alert" className="workspace-load-error"><div><strong>Receivables request failed</strong><p>{error}</p></div></div> : null}
     {notice ? <div role="status" className="receivable-notice"><CheckCircle2 size={16} /><span>{notice}</span></div> : null}
+    {processorMode ? <section className="card receivable-card">
+      <div className="panel-title"><div><p className="eyebrow">BILATERAL TERMS REVIEW</p><h2>Supply contracts</h2><p className="muted">Confirm only the exact PDF and payment term shown. A confirmation records your organization’s review; it does not adjudicate a claim.</p></div></div>
+      {contracts.length ? <div className="receivable-evidence-list">{contracts.map((contract) => <article key={contract.id} className="receivable-response-row">
+        <span><strong>{contract.contract_reference} · v{contract.version} · {contract.counterparty_name}</strong>
+          <small>{contract.effective_from}{contract.effective_to ? ` to ${contract.effective_to}` : " · no end date"} · invoice due in {contract.payment_due_days} day(s) · {contract.currency}</small>
+          <small>Terms fingerprint: {contract.terms_sha256 || "unavailable"}</small>
+          <small>State: {contract.status} / {contract.terms_review_status}</small>
+        </span>
+        {contract.terms_document ? <button type="button" className="text-link" onClick={() => void downloadContractTerms(contract.id, contract.terms_document.filename)}><ArrowDownToLine size={12} />View contract PDF</button> : null}
+        {contract.status === "draft" && contract.terms_review_status === "under_review" ? <form className="receivable-response receivable-span" onSubmit={reviewSupplyContract}>
+          <input type="hidden" name="contract_id" value={contract.id} />
+          <input type="hidden" name="terms_sha256" value={contract.terms_sha256} />
+          <label className="field"><span>Decision</span><select name="decision" required defaultValue=""><option value="">Choose a decision…</option><option value="confirmed">Confirm these terms</option><option value="needs_changes">Request a corrected version</option></select></label>
+          <label className="field"><span>Review note</span><textarea name="note" minLength={5} maxLength={2000} required placeholder="Identify the reviewed terms or explain the requested correction." /></label>
+          <button className="button button-primary" disabled={busy}>Record contract review</button>
+        </form> : null}
+      </article>)}</div> : <p className="receivable-help">No supply contract versions have been submitted for review.</p>}
+    </section> : null}
     {!processorMode ? <>
       <div className="receivable-metrics">
         <div><span>Claims in register</span><strong>{summary?.claim_count ?? "—"}</strong><small>{summary?.open_claim_count ?? 0} open; includes drafts in register count</small></div>
@@ -241,15 +353,31 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
             </form>
           </section>
           <section className="card receivable-card">
+            <div className="panel-title"><div><p className="eyebrow">VERSIONED SUPPLY TERMS</p><h2>Register a contract</h2><p className="muted">Upload the source PDF and enter the invoice payment term stated in it. The record stays unconfirmed until the processor reviews this exact version.</p></div></div>
+            <form className="receivable-form receivable-form-grid" onSubmit={createSupplyContract}>
+              <label className="field receivable-span"><span>Processor relationship</span><select name="relationship_id" required defaultValue=""><option value="">Choose relationship…</option>{relationships.filter((r) => r.status === "active" && r.counterparty_organization_id).map((r) => <option key={r.id} value={r.id}>{r.counterparty_name} · {r.external_reference}</option>)}</select></label>
+              <label className="field"><span>Contract reference</span><input name="contract_reference" required minLength={2} maxLength={120} /></label>
+              <label className="field"><span>Currency</span><input name="currency" defaultValue="KES" minLength={3} maxLength={3} required /></label>
+              <label className="field"><span>Effective from</span><input name="effective_from" type="date" required /></label>
+              <label className="field"><span>Effective to (optional)</span><input name="effective_to" type="date" /></label>
+              <label className="field"><span>Payment due calendar days after invoice</span><input name="payment_due_days" type="number" min="0" max="365" required /></label>
+              <label className="field"><span>Contract source PDF</span><input name="file" type="file" accept="application/pdf,.pdf" required /></label>
+              <button className="button button-primary receivable-span" disabled={busy}><FileUp size={14} />Submit terms for processor review</button>
+              <small className="receivable-help receivable-span">Changing a reviewed contract requires a new version. Terravanta records the parties’ terms and evidence; it does not interpret legal rights or determine arrears.</small>
+            </form>
+            {contracts.length ? <div className="receivable-evidence-list">{contracts.map((contract) => <div key={contract.id} className="receivable-response-row"><span><strong>{contract.contract_reference} · v{contract.version} · {contract.counterparty_name}</strong><small>{contract.effective_from}{contract.effective_to ? ` to ${contract.effective_to}` : " · no end date"} · payment due in {contract.payment_due_days} day(s)</small><small>{contract.status} / {contract.terms_review_status} · terms {contract.terms_sha256?.slice(0, 16) || "unavailable"}…</small></span>{contract.terms_document ? <button type="button" className="text-link" onClick={() => void downloadContractTerms(contract.id, contract.terms_document.filename)}><ArrowDownToLine size={12} />Source PDF</button> : null}</div>)}</div> : null}
+          </section>
+          <section className="card receivable-card">
             <div className="panel-title"><div><p className="eyebrow">CLAIM INTAKE</p><h2>Open a receivable claim</h2><p className="muted">The amount is your cooperative’s assertion until the processor records its response.</p></div></div>
             <form className="receivable-form receivable-form-grid" onSubmit={createCase}>
-              <label className="field"><span>Processor relationship</span><select name="relationship_id" required defaultValue=""><option value="">Choose relationship…</option>{relationships.map((r) => <option key={r.id} value={r.id}>{r.counterparty_name} · {r.external_reference} · {r.status}</option>)}</select></label>
+              <label className="field"><span>Processor relationship</span><select name="relationship_id" required value={intakeRelationshipId} onChange={(event) => { setIntakeRelationshipId(event.target.value); setIntakeContractId(""); setIntakeDueDate(""); }}><option value="">Choose relationship…</option>{relationships.map((r) => <option key={r.id} value={r.id}>{r.counterparty_name} · {r.external_reference} · {r.status}</option>)}</select></label>
               <label className="field"><span>Source statement type</span><select name="source_document_type" required defaultValue="processor_statement"><option value="processor_statement">Processor statement</option><option value="delivery_statement">Delivery statement</option><option value="payout_statement">Payout statement</option><option value="invoice">Invoice</option><option value="other">Other</option></select></label>
               <label className="field"><span>Statement / invoice reference</span><input name="source_reference" required minLength={2} maxLength={160} /></label>
               <label className="field"><span>Seller-asserted amount (KES)</span><input name="asserted_amount" type="number" min="0.01" step="0.01" required /></label>
-              <label className="field"><span>Invoice date</span><input name="invoice_date" type="date" /></label>
-              <label className="field"><span>Due date (optional)</span><input name="due_date" type="date" /></label>
-              <label className="field"><span>Due-date review basis</span><select name="due_date_basis" defaultValue="manual_review"><option value="manual_review">Cooperative reviewer checked source document</option></select><small>Contract snapshots are not yet managed here; attach and review the source document before recording a due date.</small></label>
+              <label className="field"><span>Invoice date</span><input name="invoice_date" type="date" value={intakeInvoiceDate} onChange={(event) => { const value = event.target.value; setIntakeInvoiceDate(value); const contract = contracts.find((item) => item.id === intakeContractId); setIntakeDueDate(contract && value ? addCalendarDays(value, Number(contract.payment_due_days)) : ""); }} /></label>
+              <label className="field"><span>Due date (optional)</span><input name="due_date" type="date" value={intakeDueDate} readOnly={Boolean(intakeContractId)} onChange={(event) => setIntakeDueDate(event.target.value)} /></label>
+              <div className="field"><span>Due-date review basis</span><small>{intakeContractId ? "Counterparty-confirmed contract version; date is calculated from its payment term." : "Cooperative reviewer will use the source document attached to this claim."}</small></div>
+              <label className="field"><span>Contract version (for contract-based aging)</span><select name="contract_id" value={intakeContractId} onChange={(event) => { const id = event.target.value; setIntakeContractId(id); const contract = contracts.find((item) => item.id === id); setIntakeDueDate(contract && intakeInvoiceDate ? addCalendarDays(intakeInvoiceDate, Number(contract.payment_due_days)) : ""); }}><option value="">No contract selected</option>{contracts.filter((c) => c.relationship_id === intakeRelationshipId && c.status === "active" && c.terms_review_status === "counterparty_confirmed").map((c) => <option key={c.id} value={c.id}>{c.contract_reference} v{c.version} · {c.payment_due_days} days</option>)}</select><small>For contract-based aging, the due date is calculated from the confirmed calendar-day term.</small></label>
               <label className="field"><span>Statement period start</span><input name="period_start" type="date" /></label>
               <label className="field"><span>Statement period end</span><input name="period_end" type="date" /></label>
               <label className="field receivable-span"><span>Claim description / basis</span><textarea name="description" maxLength={4000} placeholder="What amount do you believe is outstanding, and which supply period does it relate to?" /></label>
@@ -275,7 +403,7 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
               <span className="receivable-case-icon"><Clock3 size={15} /></span><span className="receivable-case-main"><strong>{row.source_reference}</strong><small>{row.status.replaceAll("_", " ")} · {row.aging?.bucket?.replaceAll("_", " ")}</small></span><b>{amount(row.asserted_amount, row.currency)}</b>
             </button>) : <div className="receivable-empty"><Inbox size={18} /><strong>No processor claims yet</strong><span>Open a claim from an actual statement. Demo claims are not loaded here.</span></div>}</div>
           </section>
-          {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode={false} onUpload={uploadEvidence} onAction={(path: string, label: string) => void run(() => api(path, token, { method: "POST" }), label)} onDownload={() => void download(`/api/v1/cooperative/receivables/cases/${selectedCase.id}/evidence-export`, `terravanta-claim-${selectedCase.source_reference}.zip`)} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} onRecordDecision={recordDecision} onReceipt={recordAndAllocate} onReviewDueDate={reviewDueDate} onSubmitInformation={submitRequestedInformation} /> : null}
+          {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode={false} onUpload={uploadEvidence} onAction={(path: string, label: string) => void run(() => api(path, token, { method: "POST" }), label)} onDownload={() => void download(`/api/v1/cooperative/receivables/cases/${selectedCase.id}/evidence-export`, `terravanta-claim-${selectedCase.source_reference}.zip`)} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} onDownloadContractTerms={downloadContractTerms} onImported={load} onRecordDecision={recordDecision} onReceipt={recordAndAllocate} onReviewDueDate={reviewDueDate} onSubmitInformation={submitRequestedInformation} /> : null}
         </div>
       </div>
     </> : <>
@@ -286,18 +414,21 @@ export function ReceivablesDesk({ role, token, initialCaseId = "" }: { role: str
             <span className="receivable-case-icon"><Inbox size={15} /></span><span className="receivable-case-main"><strong>{row.source_reference}</strong><small>{row.status.replaceAll("_", " ")} · {row.aging?.bucket?.replaceAll("_", " ")}</small></span><b>{amount(row.asserted_amount, row.currency)}</b>
           </button>) : <div className="receivable-empty"><Inbox size={18} /><strong>Inbox is clear</strong><span>No cooperative has submitted a claim to this processor account.</span></div>}</div>
         </section>
-        {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode onRespond={respond} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} /> : null}
+        {selectedCase ? <CaseDetail caseRecord={selectedCase} token={token} busy={busy} processorMode onRespond={respond} onReviewLine={reviewProcessorLine} onUploadCounterpartyEvidence={uploadProcessorEvidence} onDownloadArtifact={(artifactId: string, filename: string) => void download(`/api/v1/receivables/cases/${selectedCase.id}/evidence/${artifactId}`, filename)} onDownloadContractTerms={downloadContractTerms} /> : null}
       </div>
     </>}
     <div className="receivable-boundary"><ShieldCheck size={15} /><span>Amounts remain attributed to the seller, processor, or source evidence. This register does not issue payment demands, initiate payments, determine legal arrears, or promise settlement timing.</span></div>
   </section>;
 }
 
-function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction, onDownload, onDownloadArtifact, onRespond, onRecordDecision, onReceipt, onReviewDueDate, onSubmitInformation }: any) {
+function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onUploadCounterpartyEvidence, onReviewLine, onAction, onDownload, onDownloadArtifact, onDownloadContractTerms, onImported, onRespond, onRecordDecision, onReceipt, onReviewDueDate, onSubmitInformation }: any) {
   const c = caseRecord; const amounts = c.amounts || {};
+  const sellerEvidence = (c.evidence || []).filter((file: Row) => file.source_party === "seller");
+  const processorEvidence = (c.evidence || []).filter((file: Row) => file.source_party === "counterparty");
   return <section className="card receivable-card receivable-detail">
     <div className="panel-title"><div><p className="eyebrow">CLAIM FILE · {c.status.replaceAll("_", " ").toUpperCase()}</p><h2>{c.source_reference}</h2><p className="muted">{c.source_document_type.replaceAll("_", " ")} · Created {new Date(c.created_at).toLocaleDateString("en-KE")}</p></div>{!processorMode && c.status !== "draft" ? <button className="button button-outline" type="button" onClick={onDownload}><ArrowDownToLine size={14} />Evidence export</button> : null}</div>
     <p className="receivable-description">{c.description || "No description provided. Source statement remains the basis for the seller assertion."}</p>
+    {c.contract ? <div className="receivable-subsection"><h3>Linked supply terms <small>{c.contract.contract_reference} · v{c.contract.version}</small></h3><p>{c.contract.payment_due_days} calendar days after invoice · effective {c.contract.effective_from}{c.contract.effective_to ? ` to ${c.contract.effective_to}` : " · no end date"} · {c.contract.terms_review_status.replaceAll("_", " ")}</p><small>Exact version fingerprint: {c.contract.terms_sha256 || "unavailable"}</small>{c.contract.terms_document ? <button type="button" className="text-link" onClick={() => void onDownloadContractTerms(c.contract.id, c.contract.terms_document.filename)}><ArrowDownToLine size={12} />Download source contract</button> : null}</div> : null}
     {c.workflow ? <section className="receivable-workflow" aria-label="Claim workflow progress">
       <div className="receivable-workflow-heading"><div><p className="eyebrow">STAGE-GATED CLAIM FILE</p><h3>{c.workflow.label}</h3><p>{c.workflow.next_action}</p></div><span>{c.workflow.steps?.filter((step: Row) => step.complete).length || 0}/{c.workflow.steps?.length || 0} milestones</span></div>
       <ol className="receivable-workflow-steps">{c.workflow.steps?.map((step: Row) => <li key={step.key} className={step.complete ? "complete" : "pending"}><span>{step.complete ? <CheckCircle2 size={13} /> : <i />}</span><b>{step.label}</b></li>)}</ol>
@@ -313,25 +444,40 @@ function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction
     {!processorMode && c.status !== "paid" && c.status !== "closed" ? <form className="receivable-date-review" onSubmit={(event) => onReviewDueDate(event, c.id)}>
       <div><h3>Review the due date <small>{c.workflow?.due_date_source_supported ? "source linked" : "supporting source needed"}</small></h3><p>Past-due aging uses this reviewer-entered date and attached evidence. It is not a legal conclusion.</p></div>
       <label className="field"><span>Due date</span><input name="due_date" type="date" required defaultValue={c.due_date || ""} /></label>
-      <label className="field"><span>Supporting source document</span><select name="evidence_artifact_id" required defaultValue={c.evidence?.[0]?.id || ""} disabled={!c.evidence?.length}><option value="" disabled>Select attached evidence</option>{c.evidence?.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
+      <label className="field"><span>Supporting source document</span><select name="evidence_artifact_id" required defaultValue={sellerEvidence[0]?.id || ""} disabled={!sellerEvidence.length}><option value="" disabled>Select seller-attached evidence</option>{sellerEvidence.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
       <label className="field receivable-span"><span>What in the document supports this date?</span><textarea name="review_note" minLength={5} maxLength={1000} required placeholder="For example: invoice page 1 states payment due 30 days after 12 Oct 2026." /></label>
-      <button className="button button-outline receivable-span" disabled={busy || !c.evidence?.length}>Save date review and source link</button>
-      {!c.evidence?.length ? <small className="receivable-help receivable-span">Attach an invoice, contract extract or processor statement above before reviewing the due date.</small> : null}
+      <button className="button button-outline receivable-span" disabled={busy || !sellerEvidence.length}>Save date review and source link</button>
+      {!sellerEvidence.length ? <small className="receivable-help receivable-span">Attach an invoice or cooperative-held source document before reviewing the due date.</small> : null}
     </form> : null}
     {!processorMode && c.workflow?.stage === "information_requested" ? <form className="receivable-response receivable-information-response" onSubmit={(event) => onSubmitInformation(event, c.id)}>
       <h3>Send the requested information</h3><p>Attach any new source files above, then select one file and describe what it answers. The processor sees this in the claim timeline when its inbox refreshes.</p>
-      <label className="field"><span>Supporting file already attached to this claim</span><select name="evidence_artifact_id" required defaultValue=""><option value="" disabled>Select a source file</option>{c.evidence?.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
+      <label className="field"><span>Supporting file already attached to this claim</span><select name="evidence_artifact_id" required defaultValue=""><option value="" disabled>Select a cooperative-attached source file</option>{sellerEvidence.map((file: Row) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
       <label className="field"><span>Response note</span><textarea name="response_note" minLength={5} maxLength={2000} required placeholder="Explain which requested item this source document answers." /></label>
-      <button className="button button-primary" disabled={busy || !c.evidence?.length}>Send response to processor</button>
+      <button className="button button-primary" disabled={busy || !sellerEvidence.length}>Send response to processor</button>
     </form> : null}
-    {c.lines?.length ? <div className="receivable-subsection"><h3>Claim components <small>source-linked line items</small></h3><div className="receivable-line-list">{c.lines.map((line: Row) => {
-      const sourceFile = c.evidence?.find((file: Row) => file.id === line.evidence_artifact_id);
-      return <div className="receivable-component-row" key={line.id}><span><strong>{line.line_type.replaceAll("_", " ")} · {line.direction} · {line.source_reference || "No source ref"}</strong><small>Line {line.line_number}{line.occurred_on ? ` · ${line.occurred_on}` : ""}{line.source_locator ? ` · ${line.source_locator}` : " · locator not recorded"}{sourceFile ? ` · ${sourceFile.filename}` : " · source file not linked"}</small></span><strong>{amount(line.amount, line.currency)}</strong>{sourceFile && onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(sourceFile.id, sourceFile.filename)}><ArrowDownToLine size={12} />Source</button> : null}</div>;
-    })}</div></div> : null}
+    {c.lines?.length ? <div className="receivable-subsection"><h3>Claim components <small>source-linked line items</small></h3>
+      {processorMode && c.line_review_summary ? <p className="receivable-help">Processor review: {c.line_review_summary.reviewed_lines} of {c.lines.length} reviewed · {c.line_review_summary.matched_lines} matched · {c.line_review_summary.value_difference_lines} value differences · {c.line_review_summary.missing_from_processor_record_lines} absent from processor records.</p> : null}
+      <div className="receivable-line-list">{c.lines.map((line: Row) => {
+        const sourceFile = c.evidence?.find((file: Row) => file.id === line.evidence_artifact_id);
+        const lineReviews = (c.line_reviews || []).filter((review: Row) => review.case_line_id === line.id);
+        const latestReview = lineReviews[lineReviews.length - 1];
+        return <article className="receivable-line-record" key={line.id}>
+          <div className="receivable-component-row"><span><strong>Line {line.line_number} · {line.line_type.replaceAll("_", " ")} · seller {line.direction} · {line.source_reference || "No source ref"}</strong><small>{line.occurred_on || "Date not recorded"} · {line.source_locator || "Source locator not recorded"}{sourceFile ? ` · ${sourceFile.filename}` : " · source file not linked"}</small></span><strong>{amount(line.amount, line.currency)}</strong>{sourceFile && onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(sourceFile.id, sourceFile.filename)}><ArrowDownToLine size={12} />Source</button> : null}</div>
+          {lineReviews.length ? <div className="receivable-line-review-history"><strong>Processor review history · {lineReviews.length}</strong>{lineReviews.map((review: Row) => {
+            const evidence = c.evidence?.find((file: Row) => file.id === review.evidence_artifact_id);
+            return <div key={review.id}><span><b>{review.review_status.replaceAll("_", " ")}</b><small>{review.processor_reference || "No processor reference"}{review.source_locator ? ` · ${review.source_locator}` : ""}{review.evidence_artifact_id ? ` · ${evidence?.filename || "linked source"}` : ""}</small><small>Processor {review.processor_direction ? `${review.processor_direction} · ` : ""}{review.processor_amount === null ? "not present in processor record" : amount(review.processor_amount, review.currency)} · reviewed by {review.reviewer_name || "processor member"} · {new Date(review.reviewed_at).toLocaleString("en-KE")}</small><p>{review.review_note}</p></span>{evidence && onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(evidence.id, evidence.filename)}><ArrowDownToLine size={12} />Basis</button> : null}</div>;
+          })}</div> : <small className="receivable-help">No processor-side line review has been recorded.</small>}
+          {processorMode && c.status !== "paid" && c.status !== "closed" && onReviewLine ? <ProcessorLineReviewForm key={`${line.id}-${latestReview?.id || "new"}`} line={line} evidence={processorEvidence} busy={busy} onSubmit={(event: React.FormEvent<HTMLFormElement>) => onReviewLine(event, c.id, line.id)} /> : null}
+        </article>;
+      })}</div></div> : null}
     <div className="receivable-subsection"><h3>Source evidence <small>{c.evidence?.length || 0} file(s)</small></h3>
       {c.evidence?.length ? <div className="receivable-evidence-list">{c.evidence.map((f: Row) => <div key={f.id}><span><strong>{f.filename}</strong><small>{f.artifact_type} · SHA-256 {f.sha256.slice(0, 14)}… · {f.size_bytes ? `${Math.ceil(f.size_bytes / 1024)} KB` : "size not listed"} · File ID {f.id}</small></span><span className="receivable-file-actions"><span className="evidence-source">{f.source_party}</span>{onDownloadArtifact ? <button type="button" className="text-link" onClick={() => onDownloadArtifact(f.id, f.filename)}><ArrowDownToLine size={12} />Download</button> : null}</span></div>)}</div> : <p className="receivable-help">No files attached. A source document is required before the cooperative can assert the claim.</p>}
       {!processorMode && c.status !== "paid" && c.status !== "closed" ? <form className="receivable-upload" onSubmit={onUpload}><input name="file" type="file" accept=".pdf,.csv,application/pdf,text/csv" required /><select name="artifact_type" defaultValue="processor_statement"><option value="processor_statement">Processor statement</option><option value="delivery_evidence">Delivery / weighbridge evidence</option><option value="invoice">Invoice</option><option value="payment_evidence">Payment evidence</option><option value="other">Other evidence</option></select><input name="source_reference" placeholder="Document reference (optional)" /><button className="button button-outline" disabled={busy}><FileUp size={13} />Attach privately</button><small>Private authenticated storage · PDF/CSV only · {c.status === "draft" ? "Attach before asserting." : "Add follow-up evidence to the case record."}</small></form> : null}
+      {processorMode && c.status !== "paid" && c.status !== "closed" && onUploadCounterpartyEvidence ? <form className="receivable-upload receivable-counterparty-upload" onSubmit={(event) => onUploadCounterpartyEvidence(event, c.id)}>
+        <strong>Share processor source evidence</strong><input name="file" type="file" accept=".pdf,.csv,application/pdf,text/csv" required /><select name="artifact_type" defaultValue="processor_statement"><option value="processor_statement">Processor statement</option><option value="settlement_advice">Settlement advice</option><option value="quality_report">Quality report</option><option value="payment_advice">Payment advice</option><option value="other">Other evidence</option></select><input name="source_reference" placeholder="Processor document reference" maxLength={160} /><input name="source_locator" placeholder="Page / row locator (optional)" maxLength={180} /><button className="button button-outline" disabled={busy}><FileUp size={13} />Attach to this claim</button><small>Stored under the processor organization; attaching shares this file with both parties on this claim only.</small>
+      </form> : null}
     </div>
+    {!processorMode && onImported ? <ReceivableSourceImport caseRecord={c} token={token} onImported={onImported} /> : null}
     {!processorMode && c.status === "draft" ? <div className="receivable-action-row"><button className="button button-outline" disabled={busy || !c.evidence?.length} type="button" onClick={() => onAction(`/api/v1/cooperative/receivables/cases/${c.id}/assert`, "Seller assertion recorded; submit the claim to the registered processor.")}><CheckCircle2 size={14} />Assert claim</button><small>Attach at least one source document first, then assert and submit.</small></div> : null}
     {!processorMode && c.status === "asserted" ? <div className="receivable-action-row"><button className="button button-primary" disabled={busy || !c.counterparty_organization_id} type="button" onClick={() => onAction(`/api/v1/cooperative/receivables/cases/${c.id}/submit`, "Claim submitted to the processor inbox.")}><Send size={14} />Submit to processor</button><small>{c.counterparty_organization_id ? "The registered processor workspace will receive this claim." : "Link an active processor organization before submission."}</small></div> : null}
     {processorMode && c.status !== "paid" && c.status !== "closed" ? <form className="receivable-response" onSubmit={onRespond}><h3>Record processor response</h3><div className="receivable-form-grid">
@@ -373,4 +519,28 @@ function CaseDetail({ caseRecord, token, busy, processorMode, onUpload, onAction
     {c.events?.length ? <details className="receivable-activity"><summary>Claim activity · {c.events.length} recorded events</summary><ol>{c.events.map((event: Row) => <li key={event.id}><span className="receivable-activity-icon"><CheckCircle2 size={13} /></span><div><strong>{event.event_type.replaceAll("_", " ")}</strong><small>{new Date(event.created_at).toLocaleString("en-KE")}{event.from_status || event.to_status ? ` · ${event.from_status || "created"} → ${event.to_status || "recorded"}` : ""}</small>{event.note ? <p>{event.note}</p> : null}</div></li>)}</ol></details> : null}
     {c.aging ? <small className="receivable-footnote">Aging is an operational view of entered dates and source basis, not a legal conclusion about arrears, default, or interest.</small> : null}
   </section>;
+}
+
+function ProcessorLineReviewForm({ line, evidence, busy, onSubmit }: { line: Row; evidence: Row[]; busy: boolean; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void }) {
+  const [reviewStatus, setReviewStatus] = useState("matched");
+  const [processorAmount, setProcessorAmount] = useState(String(line.amount));
+  const [processorDirection, setProcessorDirection] = useState(line.direction);
+  function changeStatus(next: string) {
+    setReviewStatus(next);
+    setProcessorAmount(next === "matched" ? String(line.amount) : "");
+    setProcessorDirection(line.direction);
+  }
+  return <form className="receivable-line-review-form" onSubmit={onSubmit}>
+    <div><strong>Compare with processor records</strong><small>Record what your source shows. “Matched” requires the same amount and direction.</small></div>
+    <div className="receivable-line-review-fields">
+      <label className="field"><span>Processor finding</span><select name="review_status" value={reviewStatus} onChange={(event) => changeStatus(event.target.value)}><option value="matched">Matched</option><option value="value_differs">Value or direction differs</option><option value="missing_from_processor_record">Not in processor record</option></select></label>
+      <label className="field"><span>Processor amount ({line.currency})</span><input name="processor_amount" type="number" min="0" step="0.01" required={reviewStatus !== "missing_from_processor_record"} disabled={reviewStatus === "missing_from_processor_record"} value={processorAmount} onChange={(event) => setProcessorAmount(event.target.value)} /></label>
+      <label className="field"><span>Processor direction</span><select name="processor_direction" required={reviewStatus !== "missing_from_processor_record"} disabled={reviewStatus === "missing_from_processor_record"} value={processorDirection} onChange={(event) => setProcessorDirection(event.target.value)}><option value="increase">Increase</option><option value="decrease">Decrease</option><option value="informational">Informational</option></select></label>
+      <label className="field"><span>Processor row / batch reference</span><input name="processor_reference" maxLength={160} placeholder="Optional source reference" /></label>
+      <label className="field"><span>Processor source locator</span><input name="source_locator" maxLength={180} placeholder="Page, sheet, row, or record ID" /></label>
+      <label className="field"><span>Processor evidence already shared to this claim</span><select name="evidence_artifact_id" defaultValue=""><option value="">No file cited</option>{evidence.map((file) => <option key={file.id} value={file.id}>{file.filename} · {file.artifact_type.replaceAll("_", " ")}</option>)}</select></label>
+      <label className="field receivable-span"><span>Review note</span><textarea name="review_note" minLength={3} maxLength={2000} required placeholder="Explain what the processor source confirms or why the values differ." /></label>
+      <button className="button button-outline receivable-span" disabled={busy}>Save append-only line review</button>
+    </div>
+  </form>;
 }

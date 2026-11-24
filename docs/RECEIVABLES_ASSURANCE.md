@@ -8,11 +8,29 @@ This is a narrower and more valuable job than a cooperative payout close, but it
 
 ## Current implementation
 
-The repository now contains a manual receivables vertical slice: cooperative claim register and intake UI, processor inbox and response UI, organization-scoped API authorization, due-date aging, itemized assertion lines, receipts and allocations, private PDF/CSV file storage, SHA-256-checked downloads, and a claim ZIP containing JSON/CSV history plus original evidence. A cooperative can also record a budget-owner paid-repeat decision; an approved decision requires a price unit and attached approval artifact. The record is explicitly a cooperative user's attestation, not independent verification of the budget owner's identity.
+The repository now contains a manual receivables vertical slice: cooperative claim register and intake UI, processor inbox and response UI, organization-scoped API authorization, due-date aging, itemized assertion lines, processor-side per-line review, receipts and allocations, private PDF/CSV file storage, SHA-256-checked downloads, and a claim ZIP containing JSON/CSV history plus original evidence. Cooperatives can preview CSV headers, save and approve an organization-scoped schema mapping, and import rows into an empty draft claim with source locators and the original file attached. No vendor API connector or cross-party auto-matching is implied. A cooperative can also record a budget-owner paid-repeat decision; an approved decision requires a price unit and attached approval artifact. The record is explicitly a cooperative user's attestation, not independent verification of the budget owner's identity.
 
-Roles are server enforced. A processor can read a case only after submission to its registered processor organization; the seller and processor see different read paths. The existing payout close remains unchanged and separate. The current release has no source-system adapters, invoice import/matching engine, self-service processor invite flow, contract CRUD/confirmation UI, automatic retention/deletion job, malware scanner, lender portal or real claim/outcome. No customer or paid repeat is proven.
+Roles are server enforced. A processor can read a case only after submission to its registered processor organization; the seller and processor see different read paths. The existing payout close remains unchanged and separate. The current release has no vendor-specific source adapter, cross-system invoice matching engine, self-service processor invite flow, automatic retention/deletion job (timed purge is disabled), production scanner endpoint, lender portal or real claim/outcome. Upload scanning is implemented fail-closed, but deployment requires a private reachable scanner. The CI workflow is configured to verify tenant boundaries and isolated restore behavior on disposable PostGIS; the workflow run is still pending and is not a production restore drill. No customer or paid repeat is proven.
 
-The upload accepts PDF and UTF-8 CSV only, rejects oversize files, writes to a private local Docker/Render persistent disk or configured private S3-compatible bucket, uses random server-generated keys, and rechecks the stored content hash on read. Render runs one instance with a private disk by default in `render.yaml`. Do not add API instances with local-disk storage. For S3, block public access and use dedicated credentials. Antivirus scanning, expiry/deletion automation, backup restore validation and formal security review remain deployment work. Do not use real financial files until the cooperative authorizes the exact sources and retention/backup plan.
+### Bilateral contract record
+
+Migration `0014_bilateral_supply_contracts` exposes the existing versioned contract record as a cooperative-to-processor workflow. A cooperative uploads a private PDF, enters its reference, effective period, currency and calendar-day payment term, and submits that version for review. The API fingerprints the contract metadata, normalized term and document SHA-256. An authorized user in the linked processor organization can confirm that exact fingerprint or request a corrected version; the append-only review record preserves actor, timestamp, note and fingerprint. Changes are submitted as a new contract version.
+
+Claim intake can use a counterparty-confirmed version to anchor its operational due date. The API checks the invoice date falls inside the version's effective period and the entered due date matches the captured calendar-day term; it links the contract PDF into claim evidence. This is a deterministic consistency check on entered terms, not legal interpretation or a conclusion that money is legally owed. The cooperative and processor must validate the term against their executed agreement. This feature is implemented in the repository; it is not live until migration `0014` is deployed.
+
+### Versioned CSV mapping and row import
+
+An attached UTF-8 CSV can be previewed without returning row values to the browser. Terravanta fingerprints the ordered, trimmed column headers and lets a cooperative create a draft mapping from source columns to receivable line fields. A cooperative user explicitly approves the mapping before it can be applied. The apply step requires an exact schema fingerprint, a draft claim with no existing lines, and a mapped signed amount total within KES 0.01 of the claim assertion. It imports up to 5,000 rows, stores each original record locator, file hash and mapping-profile version, and leaves every line classified as seller-attested. Bad dates, amounts, enums, missing columns or a total mismatch stop the whole import before rows are written. Re-import of the same file into the same claim is blocked.
+
+This is a reusable, organization-scoped CSV mapping capability, not a DairyCore/eDairy integration, automatic identity match, or proof that a processor accepts the imported values. It uses existing source-mapping, evidence, case-line and event tables; migration `0015_immutable_source_mapping_profiles` adds no data table, but limits profile creation and approval in PostgreSQL and depends on `0014_bilateral_supply_contracts`. A named adapter should follow only after a cooperative authorizes a real sample and validates the mapping against its export.
+
+The upload accepts PDF and UTF-8 CSV only, rejects oversize files, scans with a private ClamAV `clamd` endpoint before storage, then writes to a private local Render persistent disk or configured private S3-compatible bucket. It uses random server-generated keys and rechecks the stored content hash on read. Render runs one instance with a private disk by default in `render.yaml`; do not add API instances with local-disk storage. For S3, block public access and use dedicated credentials. If the scanner is missing or unavailable, the upload fails closed. Retention metadata defaults to legal hold and unreviewed policy; purge is deliberately disabled. The CI workflow contains isolated database/object restore checks, but its run is pending and production backup, restore drill and formal security review remain deployment work. Do not use real financial files until the cooperative authorizes the exact sources and retention/backup plan.
+
+### Processor line reconciliation and source sharing
+
+Migration `0016_counterparty_line_reconciliation` adds `counterparty_line_reviews` and `counterparty_case_evidence`. A processor can append a review for each submitted seller line as matched, value/direction differs, or absent from processor records. A match requires the same amount and direction; the review stores seller and processor value snapshots, processor reference, source locator, note, reviewer and timestamp. New findings do not overwrite earlier reviews or change the seller's asserted amount or the processor's claim-level response. PostgreSQL also validates the recorded seller snapshot and match classification on insert.
+
+Processor files are stored under the processor organization. Uploading through the claim inbox explicitly links the file to that one claim, making it available to both parties for that case. Unlinked processor files stay private. Cooperative-only date reviews and information-response attachments continue to require cooperative-owned evidence. The claim API lets each party see line history and only claim-linked evidence. These controls use application checks, composite foreign keys, narrow table grants and RLS; the CI workflow is configured to exercise bilateral boundaries on disposable PostGIS. No separate staging database is available, so run an isolated staging copy before production use when one exists. The feature supports manual comparison; it is not an MIS connector, automated matching engine, legal arrears determination, or independent proof that the source data is true.
 
 ### Commercial edge to test
 
@@ -92,6 +110,7 @@ Keep the current FastAPI, PostgreSQL/PostGIS, SQLAlchemy/Alembic, role and organ
 | `evidence_artifacts` | Private object-store metadata, content hash, source, uploader, media type, retention and sensitivity; no public object URLs |
 | `source_mapping_profiles` | Organization-scoped, versioned source schema/field mappings with a human approval state; never silently apply a new mapping to old imports |
 | `supply_contracts` | Seller/buyer agreement version, effective period, payment-term snapshot, review/confirmation state and source artifact; activated terms are not silently edited |
+| `supply_contract_review_events` | Append-only processor confirmation or change request, bound to the exact terms/document fingerprint and reviewer |
 | `receivable_cases` | Seller's claim anchor (invoice, processor statement or agreed period), parties, period, currency, asserted amount, due date if human-confirmed, and current evidence status |
 | `receivable_case_lines` | Normalized supply, quality-adjustment, deduction and credit-note lines with direction, amount, provenance, evidence locator and applied mapping version |
 | `receivable_evidence_links` | Claim-to-artifact edges with role, file/row/page locator, submitting party and actor; evidence never loses its original source reference |
@@ -99,7 +118,7 @@ Keep the current FastAPI, PostgreSQL/PostGIS, SQLAlchemy/Alembic, role and organ
 | `cash_receipts` + `cash_allocations` | Inbound cash observed by the seller, its verification class, source and allocation across one or more cases; no transfer or payout instruction is issued |
 | `receivable_case_events` | Append-only submission, follow-up, dispute, confirmation and close history; correction creates a new event/version, not a rewritten audit fact |
 
-Store KES using `NUMERIC`, dates as local accounting dates, event timestamps in UTC, and source artifact hashes. Each tenant-owned row carries `organization_id`; composite foreign keys prevent a case from attaching another tenant's contract or artifact, and counterparty confirmations are bound to the case's declared counterparty and an organization member. Service authorization must still verify the correct user role, case-to-relationship counterparty consistency, data-sharing mandate, object access and every read/write. Database RLS is a production hardening step; frontend role checks alone are never sufficient.
+Store KES using `NUMERIC`, dates as local accounting dates, event timestamps in UTC, and source artifact hashes. Each tenant-owned row carries `organization_id`; composite foreign keys prevent a case from attaching another tenant's contract or artifact, and counterparty confirmations are bound to the case's declared counterparty and an organization member. PostgreSQL RLS policies in migration `0008_tenant_rls`, extended by `0014_bilateral_supply_contracts`, reinforce route-level role and relationship checks; the CI workflow is configured to exercise these boundaries on disposable PostGIS. No separate staging database is available yet. Frontend role checks alone are never sufficient.
 
 ### Derived register and aging
 
@@ -118,7 +137,7 @@ The register must label aging as “days past reviewed due date” and keep it d
 
 ### Evidence ingestion and operations
 
-1. Accept PDF and UTF-8 CSV through case-scoped upload, validate extension/signature or text encoding, size and SHA-256, and store privately. Malware scanning is not integrated; configure an external scanning control before accepting untrusted live uploads.
+1. Accept PDF and UTF-8 CSV through case-scoped upload, validate extension/signature or text encoding, size and SHA-256, and store privately. Uploads now fail closed until a private `clamd` scanner is configured; the scanner endpoint itself is still a production prerequisite.
 2. Preserve the raw file and create deterministic normalized rows with source filename, sheet/page/row locator, source reference and mapping-version ID.
 3. Any OCR or model extraction creates a draft field with confidence, model/prompt/version and source locator; a human confirms it before it affects a claim.
 4. Match only under explainable deterministic keys (processor account/reference, contract, period, invoice number, quantity/value); fuzzy suggestions remain review-only and cannot merge identities or money.
@@ -131,7 +150,13 @@ The current router uses fixed role-scoped paths and derives organization scope f
 
 ```text
 GET/POST /api/v1/cooperative/receivables/relationships
+GET      /api/v1/cooperative/receivables/contracts?relationship_id={id}
+POST     /api/v1/cooperative/receivables/relationships/{relationship_id}/contracts
+GET/POST /api/v1/cooperative/receivables/source-mappings
+POST     /api/v1/cooperative/receivables/source-mappings/{profile_id}/approve
 GET/POST /api/v1/cooperative/receivables/cases
+POST     /api/v1/cooperative/receivables/cases/{case_id}/source-import/preview
+POST     /api/v1/cooperative/receivables/cases/{case_id}/source-import/apply
 GET      /api/v1/cooperative/receivables/performance?window_days=90
 GET      /api/v1/cooperative/receivables/summary
 GET      /api/v1/cooperative/receivables/cases/{case_id}
@@ -145,13 +170,22 @@ POST     /api/v1/cooperative/receivables/cases/{case_id}/allocations
 POST     /api/v1/cooperative/receivables/cases/{case_id}/pilot-decisions
 GET      /api/v1/processor/receivables/cases[/{case_id}]
 POST     /api/v1/processor/receivables/cases/{case_id}/responses
+POST     /api/v1/processor/receivables/cases/{case_id}/evidence
+POST     /api/v1/processor/receivables/cases/{case_id}/lines/{line_id}/review
+GET      /api/v1/processor/receivables/contracts
+POST     /api/v1/processor/receivables/contracts/{contract_id}/review
+GET      /api/v1/receivables/contracts/{contract_id}/terms
 GET      /api/v1/receivables/cases/{case_id}/evidence/{artifact_id}
 GET      /api/v1/cooperative/receivables/cases/{case_id}/evidence-export
 ```
 
-The export is a ZIP with `claim.json`, line/response/receipt/allocation/event CSVs, an evidence manifest with SHA-256, and the linked source files. It is private and requires a cooperative role. The processor can download only evidence linked to a claim submitted to its organization.
+The export is a ZIP with `claim.json`, claim-line, processor-response, processor-line-review, receipt, allocation and event CSVs, an evidence manifest with SHA-256, and the linked source files. It is private and requires a cooperative role. The processor can download only evidence linked to a claim submitted to its organization.
 
-Contracts and source import adapters are future work. `due_date_basis=manual_review` records a cooperative review; the API also accepts a contract basis only for an active, counterparty-confirmed contract already in the database. There is not yet an end-user contract management workflow.
+Contract registration is available through the routes above after migration `0014_bilateral_supply_contracts` is deployed. Cooperative upload requires a private PDF and captures a calendar-day payment term. Processor review confirms or requests changes against the exact document-and-terms fingerprint; only confirmed versions can anchor contract-based aging. Processor contract routes are `GET /api/v1/processor/receivables/contracts` and `POST /api/v1/processor/receivables/contracts/{contract_id}/review`. For `due_date_basis=contract`, the due date must match invoice date plus the confirmed calendar days and the invoice date must fall within the contract version's effective period. Vendor-specific source adapters remain future work until an authorized real export is available.
+
+CSV mapping preview, draft creation, approval and apply use migration `0015_immutable_source_mapping_profiles`; deploy through `0015` before enabling this flow in production. The database then allows cooperative members to insert draft mappings and approve them, while the API role cannot modify a saved mapping definition or change an approved profile.
+
+Bilateral line comparison and processor-owned evidence sharing require migration `0016_counterparty_line_reconciliation`, after `0014` and `0015`. Production must be migrated through the reviewed current head and pass tenant-RLS checks before either UI is enabled for live claims. The CI workflow is configured to check bilateral policies on disposable PostGIS, but still needs a successful run; it does not authorize a production migration.
 
 The register response returns a structured balance breakdown, aging basis/date, status, source evidence references and verification class. Allocation logic prevents total allocations from exceeding a receipt or seller-asserted claim amount and enforces currency equality. The UI does not enumerate processor organizations: a registered processor ID is supplied through the authorized onboarding handoff. The list API must not expose a lender view to a cooperative by default or vice versa. Do not expose a route to originate a loan, initiate a bank/M-Pesa transfer, send a legal demand automatically, or certify a claim.
 
@@ -183,12 +217,9 @@ The cooperative claim detail now shows stage milestones, blockers, source locato
 
 ## Delivery sequence
 
-1. **Evidence schema:** additive tenant-scoped contract, artifact, claim, confirmation, receipt-allocation and event records; keep member payable closes intact.
-2. **Manual claim register:** seller assertion, explicit due-date basis, aging, provenance and CSV/PDF export; no AI authority or money movement.
-3. **Counterparty response:** invite-based authorized processor workspace, partial acceptance/dispute, reason codes and immutable response history.
-4. **First adapter:** only after receiving a real authorized sample from a named MIS/processor/payment source; version mapping profiles and idempotency keys.
-5. **Finance diligence view:** only with a lender design partner and explicit seller mandate, show confirmed receivable, unpaid allocation and dispute state; lender retains credit decision and funds.
-6. **Network expansion:** replicate a proven contract/event/evidence schema across additional cooperatives and processors. Do not build a general agricultural payments marketplace before a repeated paid job exists.
+1. **First adapter:** only after receiving a real authorized sample from a named MIS/processor/payment source; version mapping profiles and idempotency keys.
+2. **Finance diligence view:** only with a lender design partner and explicit seller mandate, show confirmed receivable, unpaid allocation and dispute state; lender retains credit decision and funds.
+3. **Network expansion:** replicate a proven contract/event/evidence schema across additional cooperatives and processors. Do not build a general agricultural payments marketplace before a repeated paid job exists.
 
 ## Risks and stop conditions
 

@@ -1,11 +1,56 @@
 """Private server-side storage for receivable evidence files."""
 
 import os
+import socket
+import struct
 import tempfile
 from pathlib import Path
 from uuid import UUID
 
 from .config import settings
+
+
+class EvidenceScannerUnavailable(RuntimeError):
+    """The private malware scanner could not validate an uploaded file."""
+
+
+class EvidenceMalwareDetected(ValueError):
+    """The private malware scanner rejected an uploaded file."""
+
+
+def scan_evidence(content: bytes) -> None:
+    """Fail closed using a private clamd INSTREAM endpoint on a trusted network."""
+    if not settings.evidence_scanner_host:
+        raise EvidenceScannerUnavailable("EVIDENCE_SCANNER_HOST is not configured")
+    try:
+        with socket.create_connection(
+            (settings.evidence_scanner_host, settings.evidence_scanner_port),
+            timeout=settings.evidence_scanner_timeout_seconds,
+        ) as connection:
+            connection.settimeout(settings.evidence_scanner_timeout_seconds)
+            connection.sendall(b"zINSTREAM\0")
+            for offset in range(0, len(content), 64 * 1024):
+                chunk = content[offset:offset + 64 * 1024]
+                connection.sendall(struct.pack("!I", len(chunk)) + chunk)
+            connection.sendall(struct.pack("!I", 0))
+            response = bytearray()
+            while not response.endswith(b"\0"):
+                chunk = connection.recv(4096)
+                if not chunk:
+                    raise EvidenceScannerUnavailable("Scanner closed without a verdict")
+                response.extend(chunk)
+                if len(response) > 4096:
+                    raise EvidenceScannerUnavailable("Scanner response exceeded the limit")
+    except EvidenceScannerUnavailable:
+        raise
+    except OSError as exc:
+        raise EvidenceScannerUnavailable("Private evidence scanner is unavailable") from exc
+
+    verdict = bytes(response).rstrip(b"\0").decode("utf-8", errors="replace")
+    if verdict.endswith(" FOUND"):
+        raise EvidenceMalwareDetected("Uploaded evidence was rejected by malware scanning")
+    if not verdict.endswith(" OK"):
+        raise EvidenceScannerUnavailable("Private evidence scanner returned no valid verdict")
 
 
 def _s3_client():

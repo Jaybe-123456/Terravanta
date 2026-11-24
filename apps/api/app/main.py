@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
@@ -25,6 +25,7 @@ from pypdf import PdfReader
 from .ai import nvidia, parse_structured, safe_case_response, safe_farm_response
 from .config import settings
 from .db import AdminSessionLocal, Base, admin_engine, engine, get_admin_db, get_db
+from .idempotency import replay_client_write, store_client_write_receipt
 from .models import (
     AIRequest, AIResponse, Animal, AnimalHealthEvent, AnimalHealthFollowUp, AuditLog, Buyer, CompostApplication,
     CompostBatch, Consent, Delivery, DocumentExtraction, Farm, FarmMember, FeedAllocation,
@@ -300,8 +301,11 @@ def list_cooperatives(user: User = Depends(current_user), db: Session = Depends(
 
 
 @app.post("/api/v1/farms", status_code=201)
-def create_farm(body: FarmCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_farm(body: FarmCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     require_role(db, user, "farmer", "platform_admin")
+    replay = replay_client_write(db, user, idempotency_key, "/api/v1/farms", body)
+    if replay:
+        return replay
     code = f"TV-{re.sub('[^A-Z]', '', body.county.upper())[:3]}-{secrets.token_hex(2).upper()}"
     farm = Farm(code=code, name=body.name, owner_name=body.owner_name, county=body.county, subcounty=body.subcounty, latitude=body.latitude, longitude=body.longitude, size_acres=body.size_acres, farming_system=body.farming_system, production_activities=body.production_activities, verification_status="farmer_submitted", is_synthetic=False, created_by=user.id)
     db.add(farm)
@@ -310,8 +314,10 @@ def create_farm(body: FarmCreate, user: User = Depends(current_user), db: Sessio
         db.execute(text("UPDATE farms SET location = ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326) WHERE id = :farm_id"), {"longitude": farm.longitude, "latitude": farm.latitude, "farm_id": farm.id})
     db.add(FarmMember(farm_id=farm.id, user_id=user.id, role="owner"))
     audit(db, user, "farm.created", "farm", str(farm.id), farm.id)
+    response = dump(farm)
+    store_client_write_receipt(db, user, idempotency_key, "/api/v1/farms", body, response)
     db.commit()
-    return dump(farm)
+    return response
 
 
 @app.get("/api/v1/farms/{farm_id}")
@@ -338,9 +344,13 @@ def list_plots(farm_id: UUID, user: User = Depends(current_user), db: Session = 
 
 
 @app.post("/api/v1/farms/{farm_id}/plots", status_code=201)
-def create_plot(farm_id: UUID, body: PlotCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_plot(farm_id: UUID, body: PlotCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/plots"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     occupied = db.query(func.coalesce(func.sum(Plot.area_acres), 0)).filter_by(farm_id=farm.id).scalar()
     if farm.size_acres and occupied + body.area_acres > farm.size_acres:
         raise HTTPException(422, "Plot area exceeds the recorded farm area")
@@ -348,8 +358,10 @@ def create_plot(farm_id: UUID, body: PlotCreate, user: User = Depends(current_us
     db.add(row)
     db.flush()
     audit(db, user, "plot.created", "plot", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.get("/api/v1/farms/{farm_id}/animals")
@@ -359,15 +371,21 @@ def list_animals(farm_id: UUID, user: User = Depends(current_user), db: Session 
 
 
 @app.post("/api/v1/farms/{farm_id}/animals", status_code=201)
-def create_animal(farm_id: UUID, body: AnimalCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_animal(farm_id: UUID, body: AnimalCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/animals"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     row = Animal(farm_id=farm.id, **body.model_dump())
     db.add(row)
     db.flush()
     audit(db, user, "animal.created", "animal", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.get("/api/v1/animals/{animal_id}")
@@ -843,7 +861,7 @@ def create_health_follow_up(event_id: UUID, body: HealthFollowUpCreate, user: Us
 
 
 @app.post("/api/v1/animals/{animal_id}/health-events", status_code=201)
-def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_health_event(animal_id: UUID, body: HealthEventCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     animal = db.get(Animal, animal_id)
     if not animal:
         raise HTTPException(404, "Animal not found")
@@ -852,6 +870,10 @@ def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = D
     if body.verify_record:
         require_role(db, user, "veterinarian", "platform_admin")
         verified = True
+    path = f"/api/v1/animals/{animal_id}/health-events"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     row = AnimalHealthEvent(farm_id=farm.id, animal_id=animal.id, created_by=user.id, verified_by=user.id if verified else None, event_type=body.event_type, occurred_on=body.occurred_on, summary=body.summary, observations=body.observations, follow_up_on=body.follow_up_on, status="open", verified=verified)
     db.add(row)
     db.flush()
@@ -873,8 +895,10 @@ def create_health_event(animal_id: UUID, body: HealthEventCreate, user: User = D
         source_event=source_event,
         due_on=row.follow_up_on,
     )
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.get("/api/v1/veterinary/queue")
@@ -914,9 +938,13 @@ def list_feed(farm_id: UUID, user: User = Depends(current_user), db: Session = D
 
 
 @app.post("/api/v1/farms/{farm_id}/feed-batches", status_code=201)
-def create_feed(farm_id: UUID, body: FeedBatchCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_feed(farm_id: UUID, body: FeedBatchCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/feed-batches"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     data = body.model_dump()
     if data.get("plot_id"):
         plot = db.get(Plot, data["plot_id"])
@@ -926,14 +954,20 @@ def create_feed(farm_id: UUID, body: FeedBatchCreate, user: User = Depends(curre
     db.add(row)
     db.flush()
     audit(db, user, "feed_batch.created", "feed_batch", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.post("/api/v1/farms/{farm_id}/feed-allocations", status_code=201)
-def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/feed-allocations"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     batch = db.query(FeedBatch).filter_by(id=body.feed_batch_id, farm_id=farm.id).with_for_update().first()
     animal = db.get(Animal, body.animal_id)
     if not batch or not animal or batch.farm_id != farm.id or animal.farm_id != farm.id:
@@ -944,26 +978,38 @@ def allocate_feed(farm_id: UUID, body: FeedAllocationCreate, user: User = Depend
     row = FeedAllocation(farm_id=farm.id, feed_batch_id=body.feed_batch_id, animal_id=body.animal_id, allocated_kg=body.allocated_kg, allocated_on=body.allocated_on)
     db.add(row)
     audit(db, user, "feed_allocation.created", "feed_allocation", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.post("/api/v1/farms/{farm_id}/manure-records", status_code=201)
-def create_manure(farm_id: UUID, body: ManureCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_manure(farm_id: UUID, body: ManureCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/manure-records"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     row = ManureRecord(farm_id=farm.id, **body.model_dump())
     db.add(row)
     db.flush()
     audit(db, user, "manure.created", "manure_record", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.post("/api/v1/farms/{farm_id}/compost-batches", status_code=201)
-def create_compost(farm_id: UUID, body: CompostCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_compost(farm_id: UUID, body: CompostCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/compost-batches"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     data = body.model_dump()
     if data.get("manure_record_id"):
         manure = db.get(ManureRecord, data["manure_record_id"])
@@ -973,14 +1019,20 @@ def create_compost(farm_id: UUID, body: CompostCreate, user: User = Depends(curr
     db.add(row)
     db.flush()
     audit(db, user, "compost.created", "compost_batch", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.post("/api/v1/farms/{farm_id}/compost-applications", status_code=201)
-def apply_compost(farm_id: UUID, body: CompostApplicationCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def apply_compost(farm_id: UUID, body: CompostApplicationCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/compost-applications"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     compost = db.query(CompostBatch).filter_by(id=body.compost_batch_id, farm_id=farm.id).with_for_update().first()
     plot = db.get(Plot, body.plot_id)
     if not compost or not plot or compost.farm_id != farm.id or plot.farm_id != farm.id:
@@ -993,8 +1045,10 @@ def apply_compost(farm_id: UUID, body: CompostApplicationCreate, user: User = De
     row = CompostApplication(farm_id=farm.id, compost_batch_id=body.compost_batch_id, plot_id=body.plot_id, applied_on=body.applied_on, quantity_kg=body.quantity_kg)
     db.add(row)
     audit(db, user, "compost_application.created", "compost_application", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.get("/api/v1/farms/{farm_id}/resource-cycle")
@@ -1010,9 +1064,13 @@ def list_production(farm_id: UUID, user: User = Depends(current_user), db: Sessi
 
 
 @app.post("/api/v1/farms/{farm_id}/production-records", status_code=201)
-def create_production(farm_id: UUID, body: ProductionCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_production(farm_id: UUID, body: ProductionCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/production-records"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     data = body.model_dump()
     for key, cls in (("animal_id", Animal), ("plot_id", Plot)):
         if data.get(key):
@@ -1023,14 +1081,20 @@ def create_production(farm_id: UUID, body: ProductionCreate, user: User = Depend
     db.add(row)
     db.flush()
     audit(db, user, "production.created", "production_record", str(row.id), farm.id)
+    response = dump(row)
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return dump(row)
+    return response
 
 
 @app.post("/api/v1/farms/{farm_id}/deliveries", status_code=201)
-def create_delivery(farm_id: UUID, body: DeliveryCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+def create_delivery(farm_id: UUID, body: DeliveryCreate, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     farm = farm_access(db, user, farm_id)
     require_role(db, user, "farmer", "platform_admin")
+    path = f"/api/v1/farms/{farm_id}/deliveries"
+    replay = replay_client_write(db, user, idempotency_key, path, body)
+    if replay:
+        return replay
     record = db.query(ProductionRecord).filter_by(id=body.production_record_id, farm_id=farm.id).with_for_update().first()
     if not record or record.farm_id != farm.id:
         raise HTTPException(422, "Select a production record from this farm")
@@ -1051,8 +1115,10 @@ def create_delivery(farm_id: UUID, body: DeliveryCreate, user: User = Depends(cu
     db.add(delivery)
     db.flush()
     audit(db, user, "delivery.created", "delivery", str(delivery.id), farm.id, {"lot_code": lot.lot_code})
+    response = {"delivery": dump(delivery), "product_lot": dump(lot), "source_production": dump(record)}
+    store_client_write_receipt(db, user, idempotency_key, path, body, response)
     db.commit()
-    return {"delivery": dump(delivery), "product_lot": dump(lot), "source_production": dump(record)}
+    return response
 
 
 @app.get("/api/v1/farms/{farm_id}/deliveries")

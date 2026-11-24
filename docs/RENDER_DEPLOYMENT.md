@@ -9,7 +9,7 @@ The Render Blueprint provisions the FastAPI service and one persistent disk for 
 3. Verify the API and database region match. Configure the requested Supabase values from Terravanta's dedicated project, never VetIOS.
 4. Confirm the API service and PostGIS database are ready. Keep the existing evidence disk attached while using the local evidence backend.
 
-The Blueprint leaves both database URLs unsynced. Set `MIGRATIONS_DATABASE_URL` manually to the internal owner connection string for the existing production database (`terravanta-db-dev`); `DATABASE_URL` is a separate restricted runtime login and must not use owner credentials.
+The Blueprint leaves both database URLs unsynced. Set `MIGRATIONS_DATABASE_URL` manually to the internal owner connection string for the existing production database (`terravanta-db-dev`); `DATABASE_URL` is a separate restricted runtime login and must not use owner credentials. The local migration chain reaches `0018_offline_write_idempotency`, following `0014`–`0017`; CI applies it and checks RLS/restore behavior on disposable PostGIS. No Render database is staging, and the Production database has not been changed by this work. Do not apply the new migrations there without an approved backup and deployment window.
 
 ## Prepare the restricted runtime login
 
@@ -157,6 +157,6 @@ Meta's webhook URL is `https://terravanta.onrender.com/api/v1/integrations/meta/
 
 ## Evidence storage and live records
 
-The Blueprint attaches a one-instance persistent disk for private evidence files. Do not scale the API horizontally while using local-disk evidence. Before scaling, move to a private S3-compatible bucket, disable public access and test retrieval, deletion and backup. Malware scanning and automatic retention/deletion are not implemented.
+The Blueprint attaches a one-instance persistent disk for private evidence files. Do not scale the API horizontally while using local-disk evidence. Before scaling, move to a private S3-compatible bucket, disable public access and test retrieval, deletion and backup. Uploads now fail closed until a private `clamd` scanner is configured. Timed purge is deliberately disabled; a read-only retention inventory is available. The CI restore check is not a production backup or restore drill.
 
 Before a cooperative uploads live processor records, obtain written authority for those records and agree on named-user access, purpose, retention, deletion and incident handling. Receivables exports contain the underlying evidence files and must use the cooperative's approved secure transfer channel. The product records each party's position; it does not determine a legal debt or initiate payment.

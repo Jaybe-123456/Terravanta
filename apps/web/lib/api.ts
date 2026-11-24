@@ -240,36 +240,39 @@ export async function api<T = any>(path: string, token: string, init: RequestIni
   return response.json();
 }
 
-export async function writeApi<T = any>(path: string, token: string, body: Record<string, unknown>): Promise<T | { queuedOffline: true }> {
+export async function writeApi<T = any>(path: string, token: string, body: Record<string, unknown>): Promise<T | { queuedOffline: true; storagePersistent: boolean }> {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     const ownerId = queueOwnerId();
     const safeCreatePath = /^\/api\/v1\/farms(?:\/[\w-]+\/(?:plots|animals|feed-batches|feed-allocations|manure-records|compost-batches|compost-applications|production-records|deliveries))?$|^\/api\/v1\/animals\/[\w-]+\/health-events$/;
     if (!safeCreatePath.test(path) || body.verify_record === true) {
       throw new Error("This action needs an internet connection. It has not been saved offline.");
     }
-    await enqueue(path, "POST", JSON.stringify(body), ownerId);
+    const queued = await enqueue(path, "POST", JSON.stringify(body), ownerId);
     window.dispatchEvent(new Event("terravanta-queue-change"));
-    return { queuedOffline: true };
+    return { queuedOffline: true, storagePersistent: queued.storagePersistent };
   }
   return api<T>(path, token, { method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": crypto.randomUUID() } });
 }
 
-export async function flushOfflineQueue(token: string): Promise<{ synced: number; pending: number }> {
-  if (typeof navigator === "undefined" || !navigator.onLine) return { synced: 0, pending: 0 };
+export async function flushOfflineQueue(token: string): Promise<{ synced: number; pending: number; blocked: boolean }> {
+  if (typeof navigator === "undefined" || !navigator.onLine) return { synced: 0, pending: 0, blocked: false };
   const queued = await readQueue(queueOwnerId());
   let synced = 0;
+  let blocked = false;
   for (const item of queued) {
     try {
       await api(item.path, token, { method: item.method, body: item.body, headers: { "Idempotency-Key": item.id } });
       await removeQueued(item.id);
       synced += 1;
     } catch (error) {
-      await updateQueueError(item.id, error instanceof Error ? error.message : "Sync failed");
+      const status = error instanceof Error ? /HTTP (\d{3})/.exec(error.message)?.[1] : undefined;
+      await updateQueueError(item.id, status ? `Sync needs attention (HTTP ${status})` : "Sync failed; reconnect and retry");
+      blocked = true;
       break;
     }
   }
   window.dispatchEvent(new Event("terravanta-queue-change"));
-  return { synced, pending: (await readQueue(queueOwnerId())).length };
+  return { synced, pending: (await readQueue(queueOwnerId())).length, blocked };
 }
 
 export async function uploadDocument(path: string, token: string, file: File, allowExternalProcessing: boolean): Promise<any> {

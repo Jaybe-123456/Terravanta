@@ -66,7 +66,7 @@ export function TerrasWidget({ token, role, farmId, onNavigate, onSaved }: {
         product_type: "milk", quantity: Number(quantity), unit: "liters", recorded_on: recordedOn,
       });
       if ("queuedOffline" in saved) {
-        setSavedMessage("Saved on this device. It will sync when the connection returns.");
+        setSavedMessage(saved.storagePersistent ? "Encrypted on this device. Keep your source record until sync is confirmed." : "Encrypted on this device, but browser storage persistence was not granted. Keep your source record until sync is confirmed.");
       } else {
         setSavedMessage("Milk production record saved and linked to your farm.");
         await onSaved();

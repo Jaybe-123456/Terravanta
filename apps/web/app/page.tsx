@@ -98,6 +98,7 @@ export default function Home() {
       const result = await flushOfflineQueue(token);
       setQueued(result.pending);
       if (result.synced > 0) setToast({ text: `${result.synced} offline record${result.synced === 1 ? "" : "s"} synced` });
+      if (result.blocked) setToast({ text: "An encrypted offline record needs attention before later records can sync. Keep your source record and contact support with the HTTP status shown in Settings.", error: true });
     } catch {
       // IndexedDB is unavailable in some private browsing contexts; online records continue to work.
     }
@@ -209,6 +210,12 @@ export default function Home() {
   }, [demoMode]);
 
   useEffect(() => { if (token) void loadWorkspace(token, role); }, [token, role, loadWorkspace]);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator && window.isSecureContext) {
+      void navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
+    }
+  }, []);
 
   useEffect(() => {
     const updateOnline = () => { setOnline(navigator.onLine); };
@@ -366,7 +373,7 @@ export default function Home() {
     setSaving(true);
     try {
       const result = await writeApi(path, token, body);
-      if ("queuedOffline" in result) setToast({ text: "Saved on this device. It will sync when connection returns." });
+      if ("queuedOffline" in result) setToast({ text: result.storagePersistent ? "Encrypted on this device. Keep your source record until sync is confirmed." : "Encrypted locally, but browser storage persistence was not granted. Keep your source record until sync is confirmed." });
       else { setToast({ text: "Record saved" }); form.reset(); await reload(); }
     } catch (error) {
       setToast({ text: error instanceof Error ? error.message : "Could not save this record", error: true });
@@ -1073,7 +1080,7 @@ function ReportsView({ dashboard, alerts, passport }: AnyRecord) {
 function SettingsView({ role, userName, farm, passport, online, queued, token }: AnyRecord) {
   const initials = String(userName || "TV").split(/\s+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join("").toUpperCase();
   const organizationAccessCopy = "This account has farmer access. Ask the Terravanta pilot operator to invite a verified Supabase identity and assign cooperative or processor organization membership. Keep farm-record ownership separate; role changes require operator review.";
-  return <div className="settings-layout"><div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Farm and health event forms save to this browser while offline. Queued records sync after connectivity returns. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div><WhatsAppSettings token={token} /></div>;
+  return <div className="settings-layout"><div className="two-column"><section className="card"><PanelTitle eyebrow="ACCOUNT & ACCESS" title="Current workspace role" description="Role checks are enforced on the server for each operation." /><div className="settings-role"><div className="profile-avatar large">{initials || "TV"}</div><div><strong>{userName || "Signed-in user"}</strong><small>{role.replaceAll("_", " ")}{role === "farmer" ? " · farm record owner" : role === "veterinarian" ? " · authorized clinical reviewer" : " · consented read-only access"}</small></div><StatusPill tone="green">Active</StatusPill></div><div className="settings-info"><span>Authentication mode</span><strong>{AUTH_MODE === "demo" ? "Synthetic demo" : "Supabase Auth"}</strong><small>{role === "farmer" ? organizationAccessCopy : "Access roles are assigned by Terravanta. Your current role controls which workspace menus and records are available."}</small></div><div className="settings-info"><span>Active farm</span><strong>{farm ? `${farm.name} · ${farm.code}` : "No farm registered"}</strong><small>{farm?.is_synthetic ? "Synthetic demo dataset" : farm ? "Farmer submitted records" : "Create a farm to begin your private record."}</small></div></section><div className="stacked"><section className="card"><PanelTitle eyebrow="OFFLINE SYNC" title="Local record queue" /><div className="sync-card"><span className={`sync-large ${online ? "online" : "offline"}`}>{online ? <Wifi size={19} /> : <CloudOff size={19} />}</span><div><strong>{online ? "Connected" : "Offline"}</strong><small>{queued ? `${queued} record${queued === 1 ? "" : "s"} waiting to sync` : "No records waiting to sync"}</small></div></div><p className="muted small-copy">Supported farm and health records use an encrypted, account-scoped browser queue. Sync begins after connectivity returns. Browser storage can still be cleared or evicted; keep source records until the app confirms sync. AI requests need a connection.</p></section><section className="card"><PanelTitle eyebrow="CONSENT" title="Active sharing grants" />{passport?.sharing?.filter((row: AnyRecord) => row.status === "active").length ? passport.sharing.filter((row: AnyRecord) => row.status === "active").map((row: AnyRecord) => <div className="consent-list-row" key={row.id}><ShieldCheck size={17} /><div><strong>{row.grantee_email}</strong><small>{row.scope.replaceAll("_", " ")}</small></div></div>) : <Empty title="No active sharing grants" detail="Delivery data stays private until the farm owner grants consent." />}</section></div></div><WhatsAppSettings token={token} /></div>;
 }
 
 function WhatsAppSettings({ token }: { token: string }) {
