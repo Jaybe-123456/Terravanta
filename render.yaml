@@ -35,6 +35,26 @@ services:
         value: "true"
       - key: EVIDENCE_MAX_FILE_BYTES
         value: "15000000"
+      - key: EVIDENCE_SCANNER_HOST
+        sync: false
+      - key: EVIDENCE_SCANNER_PORT
+        value: "3310"
+      - key: EVIDENCE_SCANNER_TIMEOUT_SECONDS
+        value: "8"
+      - key: EVIDENCE_RETENTION_PURGE_ENABLED
+        value: "false"
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_CHAT_MODEL
+        value: nvidia/nemotron-3.5-bolt-e4b
+      - key: NVIDIA_PARSE_MODEL
+        value: nvidia/nemotron-3.5-parse
+      - key: NVIDIA_PARSE_URL
+        value: https://ai.api.nvidia.com/v1/retrieval/nvidia/nemotron-3.5-parse/parse
+      - key: NVIDIA_PARSE_API_KEY
+        sync: false
       - key: AI_TIMEOUT_SECONDS
         value: "35"
       - key: META_WA_SEND_ENABLED

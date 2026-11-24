@@ -54,7 +54,7 @@ For each authenticated API request, `get_scoped_db` binds the verified Supabase 
 | Farm events, reminders and veterinary contact requests | Farm-scoped RLS and authenticated role checks; event history is audit-linked; reminders create notifications for individual recipients; a contact request can only be claimed by a veterinarian assigned to that farm. |
 | Sharing | A farm member manages consent. Delivery-summary consent exposes delivery and lot rows plus a narrow farm card projection. It does not grant crop, animal, veterinary, laboratory or location access. |
 | Cooperative settlement | Cooperative membership gates its reconciliation and settlement-close records. Child rows inherit the parent run/close boundary. |
-| Processor receivables | Seller and named processor memberships can read their linked claim; seller assertions and processor responses remain separate records. Unrelated organizations cannot read the case. |
+| Processor receivables | Seller and named processor memberships can read their linked claim; seller assertions, processor claim responses and append-only per-line processor reviews remain separate records. Processor-owned files remain private until attached to one claim. Unrelated organizations cannot read the case or unlinked files. Migrations `0014`–`0016` add version-pinned contract review, immutable source mapping and bilateral line/evidence records. |
 | Evidence and AI logs | Artifacts follow organization/case access; AI records are user-scoped and remain separate from signed clinical records. |
 
 The RLS migration contains no broad `USING (true)` policy for private farm or finance data. Small reference catalogs (crop types, feed suppliers, approved knowledge sources and organization directory names) are readable across accounts. This is a baseline; every new table must be added to the explicit grant and RLS migration and reviewed together with its API queries.
@@ -84,15 +84,16 @@ The first durable background workflow is documented in [`AGENTIC_WORKFLOWS.md`](
 
 ## Deploy and migrate safely
 
-Render startup runs `alembic upgrade head` with the owner-only `MIGRATIONS_DATABASE_URL`, then runs FastAPI with the restricted `DATABASE_URL`. Configure the runtime role before migration `0008_tenant_rls`; the release guide contains the SQL. GitHub CI separately applies the full migration chain to PostgreSQL/PostGIS. Do not run migrations using the runtime credential and do not fix runtime role errors by replacing it with the owner URL.
+Render startup runs `alembic upgrade head` with the owner-only `MIGRATIONS_DATABASE_URL`, then runs FastAPI with the restricted `DATABASE_URL`. Configure the runtime role before migration `0008_tenant_rls`; the release guide contains the SQL. The local schema head is now `0018_offline_write_idempotency`; GitHub CI separately applies and verifies the full migration chain on PostgreSQL/PostGIS. Do not run migrations using the runtime credential and do not fix runtime role errors by replacing it with the owner URL.
 
-CI applies the full migration chain to PostGIS and smoke-checks cross-farm isolation, legacy identity linking, staff-account claim rejection, and the consent-limited cooperative projection. For schema changes, prefer additive migrations, deploy the API and frontend in a compatible order, then remove deprecated columns only after old code is gone. Production migrations are not automatically rolled back. Use a backup/restore point for changes that alter meaning or discard data.
+The CI workflow is configured to apply the full migration chain to PostGIS and smoke-check cross-farm isolation, legacy identity linking, staff-account claim rejection, consent-limited projections, bilateral receivables boundaries and isolated restore behavior. These checks still need a successful GitHub Actions run. For schema changes, prefer additive migrations, deploy the API and frontend in a compatible order, then remove deprecated columns only after old code is gone. Production migrations are not automatically rolled back. Use a backup/restore point for changes that alter meaning or discard data.
 
 ## Known gaps before broad production use
 
 - The Supabase integration uses the Auth HTTP endpoints and a same-origin Next.js session route rather than the Supabase SSR client package. Access and refresh tokens remain provider-issued. Review the session adapter against the current Supabase SSR recommendation before broad rollout.
-- RLS is newly introduced and must be exercised on a staging copy with farmer, veterinarian, cooperative, processor and unrelated identities before live records are opened. The CI migration check proves migration syntax/application, not every permission combination.
+- CI applies the migration chain through `0018` on disposable PostGIS and exercises seller, processor and unrelated-organization RLS for claims, processor line reviews and evidence. No separate staging database was supplied, so no Render database was used and no live migration was attempted.
 - The Render runtime database role must be created and granted before deploying the migration. No production connection or deployment was performed from this workspace.
 - Supabase Auth redirect URLs, email confirmation and SMTP delivery are project settings and cannot be changed from this repository.
 - No partner callback contract exists, so no Edge Function is deployed.
-- Evidence storage needs malware scanning, retention/deletion controls, restore tests and S3 migration before horizontal API scaling.
+- Evidence upload scanning now fails closed, retention metadata and a read-only inventory exist, and the CI workflow includes database plus local evidence restore checks. Production still needs a private scanner endpoint, external object backup and a production restore drill before horizontal scaling.
+- No real cooperative or processor export, response or paid repeat has validated the receivables product or its commercial moat yet.

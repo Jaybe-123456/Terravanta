@@ -19,10 +19,24 @@ test("offline record is saved locally and replayed after reconnect", async () =>
 
   const body = { event_type: "clinical_observation", summary: "offline note" };
   const saved = await writeApi("/api/v1/animals/demo/health-events", "demo-token", body);
-  assert.deepEqual(saved, { queuedOffline: true });
+  assert.deepEqual(saved, { queuedOffline: true, storagePersistent: false });
   const queued = await readQueue();
   assert.equal(queued.length, 1);
   assert.deepEqual(JSON.parse(queued[0].body), body);
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open("terravanta-offline-v1", 2);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const stored = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const request = database.transaction("requests", "readonly").objectStore("requests").getAll();
+    request.onsuccess = () => resolve(request.result[0] as Record<string, unknown>);
+    request.onerror = () => reject(request.error);
+  });
+  assert.equal(stored.path, undefined);
+  assert.equal(stored.body, undefined);
+  assert.ok(stored.ciphertext instanceof ArrayBuffer);
+  database.close();
 
   const requests: Array<{ url: string; method: string | undefined; idempotencyKey: string | null }> = [];
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } });
@@ -32,7 +46,7 @@ test("offline record is saved locally and replayed after reconnect", async () =>
   }) as typeof fetch;
 
   const result = await flushOfflineQueue("demo-token");
-  assert.deepEqual(result, { synced: 1, pending: 0 });
+  assert.deepEqual(result, { synced: 1, pending: 0, blocked: false });
   assert.equal(requests[0].method, "POST");
   assert.equal(requests[0].url, "http://localhost:8000/api/v1/animals/demo/health-events");
   assert.ok(requests[0].idempotencyKey);
@@ -55,7 +69,7 @@ test("offline replay is scoped to the currently authenticated user", async () =>
   await enqueue("/api/v1/farms", "POST", "{}", "farmer-a");
   await enqueue("/api/v1/farms", "POST", "{}", "farmer-b");
   const result = await flushOfflineQueue("farmer-token");
-  assert.deepEqual(result, { synced: 1, pending: 0 });
+  assert.deepEqual(result, { synced: 1, pending: 0, blocked: false });
   assert.equal((await readQueue("farmer-a")).length, 0);
   assert.equal((await readQueue("farmer-b")).length, 1);
 

@@ -1,0 +1,13 @@
+{
+  "name": "Terravanta Farm Intelligence",
+  "short_name": "Terravanta",
+  "description": "Farm records and veterinary workflows for connected and offline conditions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f2",
+  "theme_color": "#28563b",
+  "icons": [
+    { "src": "/terravanta-meta-icon.png", "sizes": "any", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     evidence_s3_access_key: str = ""
     evidence_s3_secret_key: str = ""
     evidence_max_file_bytes: int = 15_000_000
+    evidence_scanner_host: str = ""
+    evidence_scanner_port: int = 3310
+    evidence_scanner_timeout_seconds: float = 8.0
+    evidence_retention_purge_enabled: bool = False
     ai_timeout_seconds: int = 35
     workflow_poll_seconds: int = 30
     whatsapp_worker_database_url: str = ""
@@ -131,6 +135,12 @@ class Settings(BaseSettings):
             raise ValueError("EVIDENCE_S3_BUCKET is required when S3 evidence storage is enabled")
         if self.evidence_max_file_bytes < 1024 or self.evidence_max_file_bytes > 50_000_000:
             raise ValueError("EVIDENCE_MAX_FILE_BYTES must be between 1024 and 50000000")
+        if self.evidence_scanner_port < 1 or self.evidence_scanner_port > 65535:
+            raise ValueError("EVIDENCE_SCANNER_PORT must be between 1 and 65535")
+        if self.evidence_scanner_timeout_seconds <= 0 or self.evidence_scanner_timeout_seconds > 60:
+            raise ValueError("EVIDENCE_SCANNER_TIMEOUT_SECONDS must be greater than 0 and at most 60")
+        if self.evidence_retention_purge_enabled:
+            raise ValueError("Timed evidence purge is disabled until an approved retention schedule and restore drill exist")
         return self
 
     @model_validator(mode="after")

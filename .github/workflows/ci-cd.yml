@@ -86,8 +86,16 @@ jobs:
         run: alembic upgrade head
       - name: Verify tenant isolation and consent-limited reads
         run: python scripts/verify_rls_smoke.py
+      - name: Verify bilateral receivables RLS boundaries
+        run: python scripts/verify_receivables_rls.py
       - name: Verify WhatsApp database role boundaries
         run: python scripts/verify_whatsapp_roles.py
+      - name: Install PostgreSQL restore tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Verify PostgreSQL backup and restore in an isolated database
+        run: python scripts/verify_postgres_restore.py
+      - name: Verify evidence object backup and restore checksum
+        run: python scripts/verify_evidence_restore.py
       - name: Verify PostGIS and migration head
         run: |
           python - <<'PY'

@@ -8,35 +8,56 @@ import logging
 import re
 import zipfile
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import PurePath
 from statistics import median
+from typing import Annotated
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .config import settings
-from .evidence_storage import delete_private, get_private, put_private, safe_key, storage_ready
+from .evidence_storage import (
+    EvidenceMalwareDetected, EvidenceScannerUnavailable, delete_private,
+    get_private, put_private, safe_key, scan_evidence, storage_ready,
+)
 from .models import (
-    AuditLog, CashAllocation, CashReceipt, CounterpartyConfirmation, CounterpartyRelationship,
+    AuditLog, CashAllocation, CashReceipt, CounterpartyCaseEvidence, CounterpartyConfirmation,
+    CounterpartyLineReview, CounterpartyRelationship,
     EvidenceArtifact, Organization, OrganizationMember, ReceivableCase, ReceivableCaseEvent,
-    ReceivableCaseLine, ReceivableEvidenceLink, ReceivablesPilotDecision, SupplyContract, User, UserRole,
+    ReceivableCaseLine, ReceivableEvidenceLink, ReceivablesPilotDecision, SourceMappingProfile,
+    SupplyContract, SupplyContractReviewEvent, User, UserRole,
 )
 from .receivables_schemas import (
-    AllocationCreate, CaseCreate, CounterpartyResponseCreate, DueDateReviewCreate, InformationResponseCreate,
-    PilotDecisionCreate, ReceiptCreate, RelationshipCreate,
+    AllocationCreate, CaseCreate, CaseLineCreate, CounterpartyLineReviewCreate,
+    CounterpartyResponseCreate, DueDateReviewCreate,
+    InformationResponseCreate, PilotDecisionCreate, ReceiptCreate, RelationshipCreate,
+    SourceImportApply, SourceImportPreviewCreate, SourceMappingProfileCreate, SupplyContractReviewCreate,
 )
 from .security import current_user, get_scoped_db, require_role
 
 log = logging.getLogger("terravanta.receivables")
 router = APIRouter(prefix="/api/v1", tags=["receivables"])
+
+
+def _scan_uploaded_evidence(content: bytes) -> None:
+    try:
+        scan_evidence(content)
+    except EvidenceMalwareDetected as exc:
+        raise HTTPException(422, "Evidence upload was rejected by the malware scanner") from exc
+    except EvidenceScannerUnavailable as exc:
+        log.warning("Evidence upload blocked because malware scanning is unavailable")
+        raise HTTPException(503, "Evidence uploads are paused until the private malware scanner is available") from exc
 NBO = ZoneInfo("Africa/Nairobi")
 ALLOWED_UPLOADS = {".pdf": ("application/pdf", b"%PDF-"), ".csv": ("text/csv", None)}
 MAX_EXPORT_BYTES = 60_000_000
+MAX_SOURCE_IMPORT_ROWS = 5_000
 
 
 def _member_org(db: Session, user: User, *, role: str, kind: str) -> Organization:
@@ -134,6 +155,112 @@ def _aging(case: ReceivableCase, today: date) -> dict:
     return {"as_of": today.isoformat(), "bucket": bucket, "days_past_due": days, "days_since_invoice": max(0, (today - case.invoice_date).days) if case.invoice_date else None}
 
 
+def _contract_fingerprint(contract: SupplyContract, artifact: EvidenceArtifact) -> str:
+    snapshot = {
+        "seller_organization_id": str(contract.organization_id),
+        "relationship_id": str(contract.relationship_id),
+        "contract_reference": contract.contract_reference,
+        "version": contract.version,
+        "effective_from": contract.effective_from.isoformat(),
+        "effective_to": contract.effective_to.isoformat() if contract.effective_to else None,
+        "currency": contract.currency,
+        "terms_snapshot": contract.terms_snapshot or {},
+        "terms_document_sha256": artifact.sha256,
+    }
+    encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _parse_source_csv(content: bytes) -> tuple[list[str], list[tuple[int, dict[str, str]]], str]:
+    try:
+        text = content.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(415, "CSV import must be UTF-8 text") from exc
+    if "\x00" in text:
+        raise HTTPException(415, "CSV import contains invalid binary data")
+    try:
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        raw_headers = reader.fieldnames or []
+        headers = [header.strip() if header else "" for header in raw_headers]
+        if not headers or len(headers) > 80 or any(not header or len(header) > 120 for header in headers):
+            raise HTTPException(422, "CSV needs 1–80 named columns; each header must be at most 120 characters")
+        normalized = [header.casefold() for header in headers]
+        if len(set(normalized)) != len(normalized):
+            raise HTTPException(422, "CSV contains duplicate column names after trimming spaces")
+        reader.fieldnames = headers
+        rows: list[tuple[int, dict[str, str]]] = []
+        for record_number, row in enumerate(reader, start=1):
+            if None in row:
+                raise HTTPException(422, f"CSV record {record_number} has more values than header columns")
+            if any(value is None for value in row.values()):
+                raise HTTPException(422, f"CSV record {record_number} has fewer values than header columns")
+            values = {header: (row.get(header) or "").strip() for header in headers}
+            if not any(values.values()):
+                continue
+            rows.append((record_number, values))
+            if len(rows) > MAX_SOURCE_IMPORT_ROWS:
+                raise HTTPException(413, f"Import is limited to {MAX_SOURCE_IMPORT_ROWS:,} non-empty rows per claim")
+    except csv.Error as exc:
+        raise HTTPException(422, "CSV structure could not be read") from exc
+    if not rows:
+        raise HTTPException(422, "CSV contains no non-empty data records")
+    fingerprint = hashlib.sha256(json.dumps(headers, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return headers, rows, fingerprint
+
+
+def _source_mapping_json(profile: SourceMappingProfile) -> dict:
+    return {
+        "id": str(profile.id), "organization_id": str(profile.organization_id),
+        "source_system": profile.source_system, "record_type": profile.record_type,
+        "schema_fingerprint": profile.schema_fingerprint, "version": profile.version,
+        "status": profile.status, "mapping_definition": profile.mapping_definition or {},
+        "created_by": str(profile.created_by), "approved_by": str(profile.approved_by) if profile.approved_by else None,
+        "created_at": profile.created_at.isoformat(),
+        "approved_at": profile.approved_at.isoformat() if profile.approved_at else None,
+    }
+
+
+def _contract_json(db: Session, contract: SupplyContract) -> dict:
+    relationship = db.query(CounterpartyRelationship).filter_by(
+        id=contract.relationship_id, organization_id=contract.organization_id,
+    ).first()
+    artifact = db.query(EvidenceArtifact).filter_by(
+        id=contract.terms_artifact_id, organization_id=contract.organization_id,
+    ).first() if contract.terms_artifact_id else None
+    if not relationship:
+        raise HTTPException(409, "Contract record is missing its relationship")
+    events = db.query(SupplyContractReviewEvent).filter_by(
+        contract_id=contract.id, organization_id=contract.organization_id,
+    ).order_by(SupplyContractReviewEvent.created_at).all()
+    return {
+        "id": str(contract.id),
+        "organization_id": str(contract.organization_id),
+        "relationship_id": str(contract.relationship_id),
+        "counterparty_name": relationship.counterparty_name,
+        "counterparty_organization_id": str(relationship.counterparty_organization_id) if relationship.counterparty_organization_id else None,
+        "contract_reference": contract.contract_reference,
+        "version": contract.version,
+        "effective_from": contract.effective_from.isoformat(),
+        "effective_to": contract.effective_to.isoformat() if contract.effective_to else None,
+        "currency": contract.currency,
+        "payment_due_days": (contract.terms_snapshot or {}).get("payment_due_days"),
+        "terms_snapshot": contract.terms_snapshot or {},
+        "terms_review_status": contract.terms_review_status,
+        "status": contract.status,
+        "terms_sha256": _contract_fingerprint(contract, artifact) if artifact else None,
+        "terms_document": {
+            "id": str(artifact.id), "filename": artifact.filename,
+            "sha256": artifact.sha256, "size_bytes": (artifact.source_metadata or {}).get("size_bytes"),
+        } if artifact else None,
+        "review_events": [{
+            "id": str(event.id), "decision": event.decision,
+            "terms_sha256": event.terms_sha256, "note": event.note,
+            "created_at": event.created_at.isoformat(),
+        } for event in events],
+        "created_at": contract.created_at.isoformat(),
+    }
+
+
 def _workflow_snapshot(case: ReceivableCase, evidence: list[dict], lines: list[ReceivableCaseLine], confirmations: list[CounterpartyConfirmation], relationship: CounterpartyRelationship | None, information_response_after_request: bool = False) -> dict:
     """Explain claim progress and surface missing proof without changing the asserted facts."""
     status = case.status
@@ -209,7 +336,31 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
                 "evidence_role": link.evidence_role, "source_locator": link.source_locator,
                 "created_at": artifact.created_at.isoformat(),
             })
+    counterparty_evidence_links = db.query(CounterpartyCaseEvidence).filter_by(case_id=case.id).order_by(CounterpartyCaseEvidence.created_at).all()
+    for link in counterparty_evidence_links:
+        artifact = db.query(EvidenceArtifact).filter_by(
+            id=link.artifact_id, organization_id=link.counterparty_organization_id,
+        ).first()
+        if artifact:
+            evidence.append({
+                "id": str(artifact.id), "filename": artifact.filename,
+                "artifact_type": artifact.artifact_type, "media_type": artifact.media_type,
+                "sha256": artifact.sha256, "source_party": artifact.source_party,
+                "source_reference": artifact.source_reference, "size_bytes": (artifact.source_metadata or {}).get("size_bytes"),
+                "evidence_role": "counterparty_support", "source_locator": link.source_locator,
+                "created_at": artifact.created_at.isoformat(),
+            })
     confirmations = db.query(CounterpartyConfirmation).filter_by(case_id=case.id).order_by(CounterpartyConfirmation.confirmed_at).all()
+    line_reviews = db.query(CounterpartyLineReview).filter_by(case_id=case.id).order_by(
+        CounterpartyLineReview.reviewed_at, CounterpartyLineReview.created_at,
+    ).all()
+    reviewer_names = {}
+    reviewer_ids = {row.reviewed_by_user_id for row in line_reviews}
+    if reviewer_ids:
+        reviewer_names = {
+            str(row.id): row.display_name
+            for row in db.query(User.id, User.display_name).filter(User.id.in_(reviewer_ids)).all()
+        }
     relationship = db.query(CounterpartyRelationship).filter_by(id=case.relationship_id, organization_id=case.organization_id).first()
     decisions = db.query(ReceivablesPilotDecision).filter_by(case_id=case.id, organization_id=case.organization_id).order_by(ReceivablesPilotDecision.created_at).all()
     receipts = db.query(CashReceipt).join(CashAllocation, CashAllocation.receipt_id == CashReceipt.id).filter(
@@ -229,12 +380,19 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
         ).order_by(ReceivableCaseEvent.created_at.desc()).first()
         info_response_after_request = bool(info_reply and _as_utc(info_reply.created_at) > _as_utc(confirmations[-1].confirmed_at))
     workflow = _workflow_snapshot(case, evidence, lines, confirmations, relationship, info_response_after_request)
+    latest_line_reviews = {}
+    for review in line_reviews:
+        latest_line_reviews[review.case_line_id] = review
     confirmed_amount = latest.confirmed_amount if latest and latest.confirmed_amount is not None else None
+    contract = db.query(SupplyContract).filter_by(
+        id=case.contract_id, organization_id=case.organization_id,
+    ).first() if case.contract_id else None
     return {
         "id": str(case.id), "organization_id": str(case.organization_id),
         "relationship_id": str(case.relationship_id),
         "counterparty_organization_id": str(case.counterparty_organization_id) if case.counterparty_organization_id else None,
         "contract_id": str(case.contract_id) if case.contract_id else None,
+        "contract": _contract_json(db, contract) if contract else None,
         "source_document_type": case.source_document_type, "source_reference": case.source_reference,
         "period_start": case.period_start.isoformat() if case.period_start else None,
         "period_end": case.period_end.isoformat() if case.period_end else None,
@@ -256,7 +414,9 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
             "processor_confirmed_less_reviewed_receipts": str(max(Decimal("0.00"), confirmed_amount - verified_received)) if confirmed_amount is not None else None,
         },
         "lines": [{
-            "id": str(row.id), "line_number": row.line_number, "line_type": row.line_type,
+            "id": str(row.id), "line_number": row.line_number,
+            "mapping_profile_id": str(row.mapping_profile_id) if row.mapping_profile_id else None,
+            "line_type": row.line_type,
             "direction": row.direction, "source_reference": row.source_reference,
             "occurred_on": row.occurred_on.isoformat() if row.occurred_on else None,
             "quantity": str(row.quantity) if row.quantity is not None else None,
@@ -264,6 +424,26 @@ def _case_json(db: Session, case: ReceivableCase, *, include_private: bool = Tru
             "source_locator": row.source_locator, "provenance_class": row.provenance_class,
             "evidence_artifact_id": str(row.evidence_artifact_id) if row.evidence_artifact_id else None,
         } for row in lines],
+        "line_review_summary": {
+            "reviewed_lines": len(latest_line_reviews),
+            "unreviewed_lines": max(0, len(lines) - len(latest_line_reviews)),
+            "matched_lines": sum(1 for row in latest_line_reviews.values() if row.review_status == "matched"),
+            "value_difference_lines": sum(1 for row in latest_line_reviews.values() if row.review_status == "value_differs"),
+            "missing_from_processor_record_lines": sum(1 for row in latest_line_reviews.values() if row.review_status == "missing_from_processor_record"),
+        },
+        "line_reviews": [{
+            "id": str(row.id), "case_line_id": str(row.case_line_id),
+            "review_status": row.review_status,
+            "seller_amount_snapshot": str(row.seller_amount_snapshot),
+            "processor_amount": str(row.processor_amount) if row.processor_amount is not None else None,
+            "processor_direction": row.processor_direction,
+            "seller_direction_snapshot": row.seller_direction_snapshot,
+            "currency": row.currency, "processor_reference": row.processor_reference,
+            "source_locator": row.source_locator, "review_note": row.review_note,
+            "reviewer_name": reviewer_names.get(str(row.reviewed_by_user_id), "Former member"),
+            "evidence_artifact_id": str(row.evidence_artifact_id) if row.evidence_artifact_id else None,
+            "reviewed_at": row.reviewed_at.isoformat(),
+        } for row in line_reviews],
         "evidence": evidence if include_private else [{k: v for k, v in item.items() if k not in {"source_reference"}} for item in evidence],
         "confirmations": [{
             "id": str(row.id), "response_status": row.response_status,
@@ -547,6 +727,426 @@ def seller_relationships(user: User = Depends(current_user), db: Session = Depen
              "external_reference": r.external_reference, "status": r.status} for r in rows]
 
 
+@router.get("/cooperative/receivables/contracts")
+def seller_contracts(
+    relationship_id: UUID | None = Query(default=None),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    organization = _seller_org(db, user)
+    query = db.query(SupplyContract).filter_by(organization_id=organization.id)
+    if relationship_id:
+        query = query.filter_by(relationship_id=relationship_id)
+    rows = query.order_by(SupplyContract.contract_reference, SupplyContract.version.desc()).all()
+    return [_contract_json(db, row) for row in rows]
+
+
+@router.post("/cooperative/receivables/relationships/{relationship_id}/contracts", status_code=201)
+def create_supply_contract(
+    relationship_id: UUID,
+    contract_reference: Annotated[str, Form(min_length=2, max_length=120)],
+    effective_from: Annotated[date, Form()],
+    payment_due_days: Annotated[int, Form(ge=0, le=365)],
+    file: Annotated[UploadFile, File()],
+    effective_to: Annotated[date | None, Form()] = None,
+    currency: Annotated[str, Form(min_length=3, max_length=3)] = "KES",
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    organization = _seller_org(db, user)
+    relationship = db.query(CounterpartyRelationship).filter_by(
+        id=relationship_id, organization_id=organization.id,
+    ).first()
+    if not relationship or relationship.relationship_type != "processor" or not relationship.counterparty_organization_id:
+        raise HTTPException(422, "Link this supply contract to a registered processor relationship first")
+    if relationship.status != "active":
+        raise HTTPException(422, "The processor relationship must be active before contract review")
+    if effective_to and effective_to < effective_from:
+        raise HTTPException(422, "Contract end date cannot precede its start date")
+    currency = currency.strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        raise HTTPException(422, "Currency must be a three-letter code")
+    if not storage_ready():
+        raise HTTPException(503, "Private evidence storage is not configured")
+
+    filename = PurePath((file.filename or "supply-contract.pdf").replace("\\", "/")).name[:255]
+    if PurePath(filename).suffix.lower() != ".pdf":
+        raise HTTPException(415, "Supply contract evidence must be a PDF")
+    content = file.file.read(settings.evidence_max_file_bytes + 1)
+    file.file.close()
+    if not content or len(content) > settings.evidence_max_file_bytes:
+        raise HTTPException(413, f"Contract PDF must be 1 byte to {settings.evidence_max_file_bytes} bytes")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(415, "File contents do not match the PDF format")
+    _scan_uploaded_evidence(content)
+
+    reference = contract_reference.strip()
+    if len(reference) < 2:
+        raise HTTPException(422, "Contract reference must contain at least two non-space characters")
+    contract_id = uuid4()
+    artifact_id = uuid4()
+    key = safe_key(organization.id, contract_id, artifact_id, ".pdf")
+    sha256 = hashlib.sha256(content).hexdigest()
+    try:
+        put_private(key, content, "application/pdf")
+    except Exception as exc:
+        log.exception("Private contract upload failed (%s)", type(exc).__name__)
+        raise HTTPException(503, "Contract document storage is temporarily unavailable") from exc
+
+    artifact = EvidenceArtifact(
+        id=artifact_id, organization_id=organization.id, uploaded_by=user.id,
+        source_party="seller", source_system="manual_upload", source_reference=reference,
+        filename=filename, media_type="application/pdf", artifact_type="contract_terms",
+        sha256=sha256, storage_key=key, sensitivity="confidential",
+        source_metadata={"size_bytes": len(content), "validation": "pdf_magic", "contract_reference": reference},
+    )
+    try:
+        # Serialize version allocation per cooperative after the file upload so
+        # concurrent submissions cannot select the same next version.
+        db.query(Organization.id).filter_by(id=organization.id).with_for_update().first()
+        existing = db.query(func.max(SupplyContract.version)).filter_by(
+            organization_id=organization.id, contract_reference=reference,
+        ).scalar()
+        contract = SupplyContract(
+            id=contract_id, organization_id=organization.id, relationship_id=relationship.id,
+            terms_artifact_id=artifact.id, contract_reference=reference,
+            version=int(existing or 0) + 1, effective_from=effective_from, effective_to=effective_to,
+            currency=currency, terms_review_status="under_review", status="draft",
+            terms_snapshot={"payment_term_basis": "calendar_days_after_invoice", "payment_due_days": payment_due_days},
+            created_by=user.id,
+        )
+        db.add_all([artifact, contract])
+        db.flush()
+        db.add(AuditLog(
+            user_id=user.id, action="receivable.supply_contract_created", entity_type="supply_contract",
+            entity_id=str(contract.id), metadata_json={"organization_id": str(organization.id), "version": contract.version, "terms_sha256": _contract_fingerprint(contract, artifact)},
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            delete_private(key)
+        except Exception:
+            log.exception("Could not remove orphaned contract file after database failure")
+        raise
+    return _contract_json(db, contract)
+
+
+@router.get("/processor/receivables/contracts")
+def processor_contracts(user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
+    processor = _processor_org(db, user)
+    rows = db.query(SupplyContract).join(
+        CounterpartyRelationship,
+        (CounterpartyRelationship.id == SupplyContract.relationship_id)
+        & (CounterpartyRelationship.organization_id == SupplyContract.organization_id),
+    ).filter(CounterpartyRelationship.counterparty_organization_id == processor.id).order_by(
+        SupplyContract.created_at.desc(), SupplyContract.version.desc(),
+    ).all()
+    return [_contract_json(db, row) for row in rows]
+
+
+@router.post("/processor/receivables/contracts/{contract_id}/review")
+def review_supply_contract(
+    contract_id: UUID, body: SupplyContractReviewCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    processor = _processor_org(db, user)
+    contract = db.query(SupplyContract).join(
+        CounterpartyRelationship,
+        (CounterpartyRelationship.id == SupplyContract.relationship_id)
+        & (CounterpartyRelationship.organization_id == SupplyContract.organization_id),
+    ).filter(
+        SupplyContract.id == contract_id,
+        CounterpartyRelationship.counterparty_organization_id == processor.id,
+    ).with_for_update().first()
+    if not contract:
+        raise HTTPException(404, "Supply contract was not found for this processor")
+    if contract.terms_review_status != "under_review" or contract.status != "draft":
+        raise HTTPException(409, "Only an unreviewed contract version can receive a decision")
+    if not contract.terms_artifact_id:
+        raise HTTPException(409, "This contract version has no source document")
+    artifact = _artifact(db, contract.organization_id, contract.terms_artifact_id)
+    current_hash = _contract_fingerprint(contract, artifact)
+    if body.terms_sha256 != current_hash:
+        raise HTTPException(409, "The terms changed after this review was opened; reload the contract version")
+    previous_status = contract.status
+    event = SupplyContractReviewEvent(
+        organization_id=contract.organization_id, contract_id=contract.id,
+        counterparty_organization_id=processor.id, actor_user_id=user.id,
+        decision=body.decision, terms_sha256=current_hash, note=body.note,
+    )
+    contract.terms_review_status = "counterparty_confirmed" if body.decision == "confirmed" else "seller_asserted"
+    contract.status = "active" if body.decision == "confirmed" else "draft"
+    db.add(event)
+    db.add(AuditLog(
+        user_id=user.id, action=f"receivable.supply_contract_{body.decision}", entity_type="supply_contract",
+        entity_id=str(contract.id), metadata_json={"organization_id": str(processor.id), "terms_sha256": current_hash},
+    ))
+    db.commit()
+    return _contract_json(db, contract)
+
+
+@router.get("/receivables/contracts/{contract_id}/terms")
+def download_contract_terms(
+    contract_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    contract = db.query(SupplyContract).filter_by(id=contract_id).first()
+    if not contract:
+        raise HTTPException(404, "Supply contract was not found")
+    allowed = False
+    try:
+        allowed = _seller_org(db, user).id == contract.organization_id
+    except HTTPException:
+        pass
+    if not allowed:
+        relationship = db.query(CounterpartyRelationship).filter_by(
+            id=contract.relationship_id, organization_id=contract.organization_id,
+        ).first()
+        if relationship and relationship.counterparty_organization_id:
+            try:
+                allowed = _processor_org(db, user).id == relationship.counterparty_organization_id
+            except HTTPException:
+                pass
+    if not allowed:
+        raise HTTPException(404, "Supply contract was not found")
+    if not contract.terms_artifact_id:
+        raise HTTPException(404, "Contract source PDF was not found")
+    artifact = _artifact(db, contract.organization_id, contract.terms_artifact_id)
+    content = _verified_artifact_bytes(artifact)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", artifact.filename)[:120] or "supply-contract.pdf"
+    return Response(content, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{safe_name}"',
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store",
+    })
+
+
+@router.get("/cooperative/receivables/source-mappings")
+def seller_source_mappings(
+    schema_fingerprint: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    organization = _seller_org(db, user)
+    query = db.query(SourceMappingProfile).filter_by(
+        organization_id=organization.id, record_type="receivable_lines",
+    )
+    if schema_fingerprint:
+        query = query.filter_by(schema_fingerprint=schema_fingerprint)
+    rows = query.order_by(SourceMappingProfile.source_system, SourceMappingProfile.version.desc()).all()
+    return [_source_mapping_json(row) for row in rows]
+
+
+@router.post("/cooperative/receivables/source-mappings", status_code=201)
+def create_source_mapping(
+    body: SourceMappingProfileCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    organization = _seller_org(db, user)
+    db.query(Organization.id).filter_by(id=organization.id).with_for_update().first()
+    existing = db.query(func.max(SourceMappingProfile.version)).filter_by(
+        organization_id=organization.id, source_system=body.source_system,
+        record_type=body.record_type,
+    ).scalar()
+    profile = SourceMappingProfile(
+        organization_id=organization.id, source_system=body.source_system,
+        record_type=body.record_type, schema_fingerprint=body.schema_fingerprint,
+        version=int(existing or 0) + 1, status="draft",
+        mapping_definition=body.mapping_definition, created_by=user.id,
+    )
+    db.add(profile)
+    db.flush()
+    db.add(AuditLog(
+        user_id=user.id, action="receivable.source_mapping_created", entity_type="source_mapping_profile",
+        entity_id=str(profile.id), metadata_json={
+            "organization_id": str(organization.id), "version": profile.version,
+            "source_system": profile.source_system, "schema_fingerprint": profile.schema_fingerprint,
+        },
+    ))
+    db.commit()
+    return _source_mapping_json(profile)
+
+
+@router.post("/cooperative/receivables/source-mappings/{profile_id}/approve")
+def approve_source_mapping(
+    profile_id: UUID,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    organization = _seller_org(db, user)
+    profile = db.query(SourceMappingProfile).filter_by(
+        id=profile_id, organization_id=organization.id, record_type="receivable_lines",
+    ).with_for_update().first()
+    if not profile:
+        raise HTTPException(404, "Source mapping was not found")
+    if profile.status != "draft":
+        raise HTTPException(409, "Only a draft source mapping can be approved")
+    profile.status = "approved"
+    profile.approved_by = user.id
+    profile.approved_at = datetime.now(timezone.utc)
+    db.add(AuditLog(
+        user_id=user.id, action="receivable.source_mapping_approved", entity_type="source_mapping_profile",
+        entity_id=str(profile.id), metadata_json={
+            "organization_id": str(organization.id), "version": profile.version,
+            "schema_fingerprint": profile.schema_fingerprint,
+        },
+    ))
+    db.commit()
+    return _source_mapping_json(profile)
+
+
+@router.post("/cooperative/receivables/cases/{case_id}/source-import/preview")
+def preview_case_source_import(
+    case_id: UUID, body: SourceImportPreviewCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _seller_case(db, user, case_id)
+    if case.status != "draft":
+        raise HTTPException(409, "Source rows can be mapped only while the claim is a draft")
+    artifact = _artifact(db, case.organization_id, body.evidence_artifact_id)
+    linked = db.query(ReceivableEvidenceLink.id).filter_by(
+        organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+    ).first()
+    if not linked:
+        raise HTTPException(422, "Attach the CSV to this claim before previewing it")
+    if not artifact.filename.lower().endswith(".csv") or artifact.media_type != "text/csv":
+        raise HTTPException(415, "Choose a CSV evidence file")
+    headers, rows, fingerprint = _parse_source_csv(_verified_artifact_bytes(artifact))
+    return {
+        "evidence_artifact_id": str(artifact.id), "filename": artifact.filename,
+        "sha256": artifact.sha256, "schema_fingerprint": fingerprint,
+        "headers": headers, "row_count": len(rows), "max_rows": MAX_SOURCE_IMPORT_ROWS,
+        "data_preview": "Values stay in the cooperative workspace; only column names and row count are returned here.",
+    }
+
+
+@router.post("/cooperative/receivables/cases/{case_id}/source-import/apply")
+def apply_case_source_import(
+    case_id: UUID, body: SourceImportApply,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _seller_case(db, user, case_id)
+    case = db.query(ReceivableCase).filter_by(
+        id=case.id, organization_id=case.organization_id,
+    ).with_for_update().first()
+    if not case:
+        raise HTTPException(404, "Receivable claim was not found")
+    if case.status != "draft":
+        raise HTTPException(409, "Rows can be imported only while the claim is a draft")
+    if db.query(ReceivableCaseLine.id).filter_by(
+        organization_id=case.organization_id, case_id=case.id,
+    ).first():
+        raise HTTPException(409, "This claim already has line items; import into a fresh draft to avoid duplicating or replacing them")
+    profile = db.query(SourceMappingProfile).filter_by(
+        id=body.mapping_profile_id, organization_id=case.organization_id,
+        record_type="receivable_lines", status="approved",
+    ).first()
+    if not profile:
+        raise HTTPException(422, "Choose an approved cooperative source mapping")
+    artifact = _artifact(db, case.organization_id, body.evidence_artifact_id)
+    if not artifact.filename.lower().endswith(".csv") or artifact.media_type != "text/csv":
+        raise HTTPException(415, "Choose a CSV evidence file")
+    linked = db.query(ReceivableEvidenceLink.id).filter_by(
+        organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+    ).first()
+    if not linked:
+        raise HTTPException(422, "The source CSV must be attached to this claim")
+    if db.query(ReceivableEvidenceLink.id).filter_by(
+        organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+        evidence_role="line_import",
+    ).first():
+        raise HTTPException(409, "This CSV has already been imported into the claim")
+
+    headers, rows, fingerprint = _parse_source_csv(_verified_artifact_bytes(artifact))
+    if profile.schema_fingerprint != fingerprint:
+        raise HTTPException(409, "The CSV columns changed since this mapping was reviewed; preview and map this schema again")
+    mapping = profile.mapping_definition or {}
+    columns = mapping.get("columns", {})
+    defaults = mapping.get("defaults", {})
+    if any(header not in headers for header in columns.values()):
+        raise HTTPException(409, "A mapped column is missing from this CSV; create a new mapping version")
+
+    def field_value(row: dict[str, str], field: str) -> str:
+        column = columns.get(field)
+        value = row.get(column, "") if column else ""
+        if not value:
+            value = defaults.get(field, "")
+        return str(value).strip()
+
+    parsed_lines: list[CaseLineCreate] = []
+    signed_total = Decimal("0")
+    for record_number, row in rows:
+        try:
+            amount_value = Decimal(field_value(row, "amount"))
+            quantity_text = field_value(row, "quantity")
+            quantity_value = Decimal(quantity_text) if quantity_text else None
+            date_text = field_value(row, "occurred_on")
+            occurred_on = date.fromisoformat(date_text) if date_text else None
+            line = CaseLineCreate.model_validate({
+                "line_type": field_value(row, "line_type"),
+                "direction": field_value(row, "direction"),
+                "amount": amount_value,
+                "source_reference": field_value(row, "source_reference"),
+                "occurred_on": occurred_on,
+                "quantity": quantity_value,
+                "unit": field_value(row, "unit"),
+                "source_locator": f"{artifact.filename[:120]}#record-{record_number}",
+                "evidence_artifact_id": artifact.id,
+            })
+        except ValidationError as exc:
+            issue = exc.errors()[0] if exc.errors() else {}
+            field_name = str((issue.get("loc") or ("line",))[0])
+            raise HTTPException(422, f"CSV record {record_number} field {field_name}: {issue.get('msg', 'value does not fit the approved mapping')}") from exc
+        except InvalidOperation as exc:
+            raise HTTPException(422, f"CSV record {record_number} contains an invalid decimal value") from exc
+        except ValueError as exc:
+            raise HTTPException(422, f"CSV record {record_number} contains a date that is not ISO YYYY-MM-DD") from exc
+        if not line.amount.is_finite() or (line.quantity is not None and not line.quantity.is_finite()):
+            raise HTTPException(422, f"CSV record {record_number} contains a non-finite amount or quantity")
+        if line.direction == "increase":
+            signed_total += line.amount
+        elif line.direction == "decrease":
+            signed_total -= line.amount
+        parsed_lines.append(line)
+
+    if abs(signed_total - case.asserted_amount) > Decimal("0.01"):
+        raise HTTPException(422, f"Mapped line total {signed_total:.2f} {case.currency} does not equal claim amount {case.asserted_amount:.2f} {case.currency}; no rows were imported")
+
+    for line_number, line in enumerate(parsed_lines, start=1):
+        db.add(ReceivableCaseLine(
+            organization_id=case.organization_id, case_id=case.id,
+            mapping_profile_id=profile.id, line_number=line_number,
+            line_type=line.line_type, direction=line.direction,
+            source_reference=line.source_reference, occurred_on=line.occurred_on,
+            quantity=line.quantity, unit=line.unit, amount=line.amount,
+            currency=case.currency, evidence_artifact_id=artifact.id,
+            source_locator=line.source_locator, provenance_class="seller_attested",
+            created_by=user.id,
+        ))
+    db.add(ReceivableEvidenceLink(
+        organization_id=case.organization_id, case_id=case.id, artifact_id=artifact.id,
+        evidence_role="line_import", source_locator=f"mapping:{profile.id}:v{profile.version}", linked_by=user.id,
+    ))
+    previous_status = case.status
+    case.updated_at = datetime.now(timezone.utc)
+    _event(
+        db, case, user, "source_lines_imported", previous_status, previous_status,
+        f"Imported {len(parsed_lines)} source rows using {profile.source_system} mapping v{profile.version}; "
+        f"schema {fingerprint}; source file SHA-256 {artifact.sha256}.", artifact.id,
+    )
+    db.add(AuditLog(
+        user_id=user.id, action="receivable.source_rows_imported", entity_type="receivable_case",
+        entity_id=str(case.id), metadata_json={
+            "organization_id": str(case.organization_id), "artifact_id": str(artifact.id),
+            "mapping_profile_id": str(profile.id), "mapping_version": profile.version,
+            "row_count": len(parsed_lines), "schema_fingerprint": fingerprint,
+            "signed_total": str(signed_total), "currency": case.currency,
+        },
+    ))
+    db.commit()
+    return {
+        "case": _case_with_events(db, case), "rows_imported": len(parsed_lines),
+        "signed_total": str(signed_total), "currency": case.currency,
+        "mapping_profile": _source_mapping_json(profile),
+        "source_sha256": artifact.sha256,
+    }
+
+
 @router.post("/cooperative/receivables/relationships", status_code=201)
 def create_relationship(body: RelationshipCreate, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     org = _seller_org(db, user)
@@ -589,12 +1189,20 @@ def create_case(body: CaseCreate, user: User = Depends(current_user), db: Sessio
         raise HTTPException(422, "Receivables claims must be linked to a processor relationship")
     if db.query(ReceivableCase.id).filter_by(organization_id=org.id, source_reference=body.source_reference).first():
         raise HTTPException(409, "That statement or invoice reference is already in this cooperative's claim register")
+    contract = None
     if body.due_date_basis == "contract":
         if not body.contract_id:
             raise HTTPException(422, "Select the reviewed supply contract supporting the due date")
         contract = db.query(SupplyContract).filter_by(id=body.contract_id, organization_id=org.id, relationship_id=relation.id).first()
         if not contract or contract.terms_review_status != "counterparty_confirmed" or contract.status != "active":
             raise HTTPException(422, "Only an active, counterparty-confirmed contract can set a contract due date")
+        if not body.invoice_date or not body.due_date:
+            raise HTTPException(422, "Contract-based aging needs both an invoice date and its due date")
+        if body.invoice_date < contract.effective_from or (contract.effective_to and body.invoice_date > contract.effective_to):
+            raise HTTPException(422, "The invoice date falls outside this contract version's effective period")
+        due_days = (contract.terms_snapshot or {}).get("payment_due_days")
+        if not isinstance(due_days, int) or due_days < 0 or body.due_date != body.invoice_date + timedelta(days=due_days):
+            raise HTTPException(422, "The recorded due date must match the confirmed invoice payment term")
     elif body.contract_id:
         contract = db.query(SupplyContract).filter_by(id=body.contract_id, organization_id=org.id, relationship_id=relation.id).first()
         if not contract:
@@ -634,7 +1242,21 @@ def create_case(body: CaseCreate, user: User = Depends(current_user), db: Sessio
         artifact = _artifact(db, org.id, artifact_id)
         db.add(ReceivableEvidenceLink(organization_id=org.id, case_id=case.id, artifact_id=artifact.id,
                                       evidence_role="claim_support", linked_by=user.id))
-    _event(db, case, user, "case_created", "", "draft", "Seller-asserted claim draft created")
+    if body.due_date_basis == "contract" and contract and contract.terms_artifact_id:
+        db.add(ReceivableEvidenceLink(
+            organization_id=org.id, case_id=case.id, artifact_id=contract.terms_artifact_id,
+            evidence_role="due_date_support",
+            source_locator=f"contract:{contract.contract_reference}:v{contract.version}", linked_by=user.id,
+        ))
+    contract_event_note = "Seller-asserted claim draft created"
+    contract_event_artifact = None
+    if body.due_date_basis == "contract" and contract:
+        contract_event_note = (
+            f"Contract-based due date recorded from {contract.contract_reference} v{contract.version}; "
+            f"{(contract.terms_snapshot or {}).get('payment_due_days')} calendar days after invoice."
+        )
+        contract_event_artifact = contract.terms_artifact_id
+    _event(db, case, user, "case_created", "", "draft", contract_event_note, contract_event_artifact)
     db.commit()
     return _case_with_events(db, case)
 
@@ -745,6 +1367,7 @@ async def upload_case_evidence(
             raise HTTPException(415, "CSV evidence must be valid UTF-8 text") from exc
         if "\x00" in text:
             raise HTTPException(415, "CSV evidence contains invalid binary data")
+    await run_in_threadpool(_scan_uploaded_evidence, content)
     artifact_id = uuid4()
     key = safe_key(case.organization_id, case.id, artifact_id, suffix)
     sha256 = hashlib.sha256(content).hexdigest()
@@ -822,6 +1445,175 @@ def processor_cases(user: User = Depends(current_user), db: Session = Depends(ge
 @router.get("/processor/receivables/cases/{case_id}")
 def processor_case(case_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_scoped_db)):
     return _case_with_events(db, _processor_case(db, user, case_id))
+
+
+@router.post("/processor/receivables/cases/{case_id}/evidence", status_code=201)
+async def upload_processor_case_evidence(
+    case_id: UUID,
+    file: UploadFile = File(...),
+    artifact_type: str = Form("processor_statement"),
+    source_reference: str = Form(""),
+    source_locator: str = Form(""),
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _processor_case(db, user, case_id)
+    if case.status in {"paid", "closed"}:
+        raise HTTPException(409, "Processor evidence cannot be added to a paid or closed claim")
+    if not storage_ready():
+        raise HTTPException(503, "Private evidence storage is not configured")
+    filename = PurePath((file.filename or "evidence").replace("\\", "/")).name[:255]
+    suffix = PurePath(filename).suffix.lower()
+    if suffix not in ALLOWED_UPLOADS:
+        raise HTTPException(415, "Only PDF and UTF-8 CSV evidence files are accepted")
+    content = await file.read(settings.evidence_max_file_bytes + 1)
+    await file.close()
+    if not content or len(content) > settings.evidence_max_file_bytes:
+        raise HTTPException(413, f"Evidence file must be 1 byte to {settings.evidence_max_file_bytes} bytes")
+    declared, signature = ALLOWED_UPLOADS[suffix]
+    if signature and not content.startswith(signature):
+        raise HTTPException(415, "File contents do not match the declared PDF format")
+    if suffix == ".csv":
+        try:
+            decoded = content.decode("utf-8-sig", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(415, "CSV evidence must be valid UTF-8 text") from exc
+        if "\x00" in decoded:
+            raise HTTPException(415, "CSV evidence contains invalid binary data")
+    await run_in_threadpool(_scan_uploaded_evidence, content)
+    allowed_artifact_types = {"processor_statement", "settlement_advice", "quality_report", "payment_advice", "other"}
+    if artifact_type not in allowed_artifact_types:
+        raise HTTPException(422, "Choose a supported processor evidence type")
+
+    processor = _processor_org(db, user)
+    sha256 = hashlib.sha256(content).hexdigest()
+    artifact = db.query(EvidenceArtifact).filter_by(organization_id=processor.id, sha256=sha256).first()
+    created_object_key = None
+    if artifact is None:
+        artifact_id = uuid4()
+        key = safe_key(processor.id, case.id, artifact_id, suffix)
+        try:
+            put_private(key, content, declared)
+        except Exception as exc:
+            log.exception("Processor evidence write failed (%s)", type(exc).__name__)
+            raise HTTPException(503, "Evidence storage is temporarily unavailable") from exc
+        created_object_key = key
+        artifact = EvidenceArtifact(
+            id=artifact_id, organization_id=processor.id, uploaded_by=user.id,
+            source_party="counterparty", source_system="processor_upload",
+            source_reference=source_reference.strip()[:160], filename=filename,
+            media_type=declared, artifact_type=artifact_type, sha256=sha256,
+            storage_key=key, sensitivity="confidential",
+            source_metadata={"size_bytes": len(content), "validation": "extension_magic_utf8"},
+        )
+        db.add(artifact)
+        db.flush()
+    existing_link = db.query(CounterpartyCaseEvidence.id).filter_by(
+        case_id=case.id, artifact_id=artifact.id, source_locator=source_locator.strip()[:180],
+    ).first()
+    if existing_link:
+        if created_object_key:
+            db.rollback()
+            delete_private(created_object_key)
+        return JSONResponse(status_code=200, content={
+            "id": str(artifact.id), "filename": artifact.filename,
+            "media_type": artifact.media_type, "artifact_type": artifact.artifact_type,
+            "sha256": artifact.sha256, "source_party": artifact.source_party,
+            "size_bytes": (artifact.source_metadata or {}).get("size_bytes"),
+            "created_at": artifact.created_at.isoformat(), "already_attached": True,
+        })
+
+    db.add(CounterpartyCaseEvidence(
+        organization_id=case.organization_id, case_id=case.id,
+        counterparty_organization_id=processor.id, artifact_id=artifact.id,
+        source_locator=source_locator.strip()[:180], linked_by=user.id,
+    ))
+    case.updated_at = datetime.now(timezone.utc)
+    _event(
+        db, case, user, "processor_evidence_attached", case.status, case.status,
+        f"Processor source evidence attached: {filename} [{sha256[:12]}]",
+        artifact.id,
+    )
+    db.add(AuditLog(
+        user_id=user.id, action="receivable.processor_evidence_attached", entity_type="receivable_case",
+        entity_id=str(case.id), metadata_json={
+            "organization_id": str(case.organization_id), "counterparty_organization_id": str(processor.id),
+            "artifact_id": str(artifact.id), "sha256": sha256,
+        },
+    ))
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        if created_object_key:
+            try:
+                delete_private(created_object_key)
+            except Exception:
+                log.exception("Could not remove orphaned processor evidence after database failure")
+        raise
+    return {
+        "id": str(artifact.id), "filename": artifact.filename,
+        "media_type": artifact.media_type, "artifact_type": artifact.artifact_type,
+        "sha256": artifact.sha256, "source_party": artifact.source_party,
+        "size_bytes": (artifact.source_metadata or {}).get("size_bytes"),
+        "created_at": artifact.created_at.isoformat(),
+    }
+
+
+@router.post("/processor/receivables/cases/{case_id}/lines/{line_id}/review", status_code=201)
+def review_processor_case_line(
+    case_id: UUID, line_id: UUID, body: CounterpartyLineReviewCreate,
+    user: User = Depends(current_user), db: Session = Depends(get_scoped_db),
+):
+    case = _processor_case(db, user, case_id)
+    if case.status in {"paid", "closed"}:
+        raise HTTPException(409, "A paid or closed claim no longer accepts line reviews")
+    processor = _processor_org(db, user)
+    line = db.query(ReceivableCaseLine).filter_by(
+        id=line_id, case_id=case.id, organization_id=case.organization_id,
+    ).first()
+    if not line:
+        raise HTTPException(404, "Claim line was not found")
+    same_value = body.processor_amount == line.amount and body.processor_direction == line.direction
+    if body.review_status == "matched" and not same_value:
+        raise HTTPException(422, "A matched line must have the same amount and direction as the seller's source line")
+    if body.review_status == "value_differs" and same_value:
+        raise HTTPException(422, "Use matched when the processor-side amount and direction equal the seller's line")
+    if body.evidence_artifact_id is not None and not db.query(CounterpartyCaseEvidence.id).filter_by(
+        case_id=case.id, counterparty_organization_id=processor.id,
+        artifact_id=body.evidence_artifact_id,
+    ).first():
+        raise HTTPException(422, "Attach processor evidence to this claim before citing it in a line review")
+
+    review = CounterpartyLineReview(
+        organization_id=case.organization_id, case_id=case.id, case_line_id=line.id,
+        counterparty_organization_id=processor.id, reviewed_by_user_id=user.id,
+        review_status=body.review_status, seller_amount_snapshot=line.amount,
+        processor_amount=body.processor_amount, processor_direction=body.processor_direction,
+        seller_direction_snapshot=line.direction,
+        currency=case.currency, processor_reference=body.processor_reference,
+        source_locator=body.source_locator, review_note=body.review_note,
+        evidence_artifact_id=body.evidence_artifact_id,
+    )
+    db.add(review)
+    case.updated_at = datetime.now(timezone.utc)
+    _event(
+        db, case, user, "processor_line_review_recorded", case.status, case.status,
+        f"Processor line review recorded for line {line.line_number}: {body.review_status}; "
+        f"processor reference {body.processor_reference or 'not supplied'}.", body.evidence_artifact_id,
+    )
+    db.add(AuditLog(
+        user_id=user.id, action="receivable.processor_line_review", entity_type="receivable_case_line",
+        entity_id=str(line.id), metadata_json={
+            "organization_id": str(case.organization_id), "case_id": str(case.id),
+            "counterparty_organization_id": str(processor.id), "review_status": body.review_status,
+            "seller_amount": str(line.amount),
+            "processor_amount": str(body.processor_amount) if body.processor_amount is not None else None,
+            "processor_direction": body.processor_direction,
+            "evidence_artifact_id": str(body.evidence_artifact_id) if body.evidence_artifact_id else None,
+        },
+    ))
+    db.commit()
+    return _case_with_events(db, case)
 
 
 @router.post("/processor/receivables/cases/{case_id}/responses", status_code=201)
@@ -991,10 +1783,20 @@ def download_evidence(case_id: UUID, artifact_id: UUID, user: User = Depends(cur
             raise
         case = _processor_case(db, user, case_id)
         org_id = case.organization_id
-    link = db.query(ReceivableEvidenceLink).filter_by(case_id=case.id, organization_id=org_id, artifact_id=artifact_id).first()
-    if not link:
+    seller_link = db.query(ReceivableEvidenceLink.id).filter_by(
+        case_id=case.id, organization_id=org_id, artifact_id=artifact_id,
+    ).first()
+    counterparty_link = db.query(CounterpartyCaseEvidence.id).filter_by(
+        case_id=case.id, artifact_id=artifact_id,
+    ).first()
+    line_review_link = db.query(CounterpartyLineReview.id).filter_by(
+        case_id=case.id, evidence_artifact_id=artifact_id,
+    ).first()
+    if not (seller_link or counterparty_link or line_review_link):
         raise HTTPException(404, "Evidence is not linked to this claim")
-    artifact = _artifact(db, org_id, artifact_id)
+    artifact = db.query(EvidenceArtifact).filter_by(id=artifact_id).first()
+    if not artifact:
+        raise HTTPException(404, "Evidence is not available to this account")
     content = _verified_artifact_bytes(artifact)
     safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", artifact.filename)[:120] or "evidence"
     return Response(content, media_type=artifact.media_type, headers={"Content-Disposition": f'attachment; filename="{safe_name}"', "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
@@ -1006,7 +1808,9 @@ def evidence_export(case_id: UUID, user: User = Depends(current_user), db: Sessi
     data = _case_with_events(db, case)
     artifacts = []
     for item in data["evidence"]:
-        artifact = _artifact(db, case.organization_id, UUID(item["id"]))
+        artifact = db.query(EvidenceArtifact).filter_by(id=UUID(item["id"])).first()
+        if not artifact:
+            raise HTTPException(409, "A linked evidence file is not available for this export")
         artifacts.append(artifact)
     total_bytes = sum(int((item.source_metadata or {}).get("size_bytes") or 0) for item in artifacts)
     if total_bytes > MAX_EXPORT_BYTES:
@@ -1017,6 +1821,7 @@ def evidence_export(case_id: UUID, user: User = Depends(current_user), db: Sessi
             archive.writestr("claim.json", json.dumps(data, ensure_ascii=False, indent=2))
             archive.writestr("claim-lines.csv", _csv_text(data["lines"]))
             archive.writestr("processor-responses.csv", _csv_text(data["confirmations"]))
+            archive.writestr("processor-line-reviews.csv", _csv_text(data["line_reviews"]))
             archive.writestr("budget-owner-decisions.csv", _csv_text(data["pilot_decisions"]))
             archive.writestr("cash-receipts.csv", _csv_text(data["receipts"]))
             archive.writestr("cash-allocations.csv", _csv_text(data["allocations"]))
